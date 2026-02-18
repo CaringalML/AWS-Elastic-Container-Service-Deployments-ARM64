@@ -34,7 +34,7 @@ resource "aws_launch_template" "ecs" {
   }
 }
 
-# 3. Auto Scaling Group
+# 3. Auto Scaling Group (Pure Spot Configuration)
 resource "aws_autoscaling_group" "ecs" {
   name                = "${var.project_name}-ecs-asg"
   vpc_zone_identifier = aws_subnet.public[*].id
@@ -45,7 +45,7 @@ resource "aws_autoscaling_group" "ecs" {
 
   mixed_instances_policy {
     instances_distribution {
-      on_demand_base_capacity                  = 1
+      on_demand_base_capacity                  = 0
       on_demand_percentage_above_base_capacity = 0
       spot_allocation_strategy                 = "price-capacity-optimized"
     }
@@ -55,8 +55,10 @@ resource "aws_autoscaling_group" "ecs" {
         launch_template_id = aws_launch_template.ecs.id
         version            = "$Latest"
       }
+      
       override { instance_type = "t4g.micro" }
       override { instance_type = "t4g.small" }
+      override { instance_type = "t4g.medium" }
     }
   }
 
@@ -72,10 +74,10 @@ resource "aws_autoscaling_group" "ecs" {
     propagate_at_launch = true
   }
 
-  # FIX: Ensures instances are killed before the Internet Gateway is detached
   depends_on = [aws_internet_gateway.main]
 
   lifecycle {
+    # FIX: Prevents Terraform from resetting the instance count during apply
     ignore_changes        = [desired_capacity]
     create_before_destroy = true
   }
@@ -121,7 +123,7 @@ resource "aws_ecs_cluster_capacity_providers" "main" {
 
   default_capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.self_managed.name
-    base              = 1
+    base              = 0
     weight            = 1
   }
 }

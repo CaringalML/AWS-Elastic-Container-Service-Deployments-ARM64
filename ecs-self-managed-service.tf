@@ -6,7 +6,7 @@ resource "aws_ecs_service" "main" {
 
   capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.self_managed.name
-    base              = 1
+    base              = 0
     weight            = 1
   }
 
@@ -18,7 +18,11 @@ resource "aws_ecs_service" "main" {
 
   health_check_grace_period_seconds = 60
 
-  # CRITICAL: Forces Service to die BEFORE Cluster, Network, or IAM
+  # Stabilization settings for updates
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 200
+
+  # Dependencies to ensure correct order
   depends_on = [
     aws_lb_listener.http,
     aws_iam_role_policy_attachment.ecs_task_execution_role_policy,
@@ -26,4 +30,9 @@ resource "aws_ecs_service" "main" {
     aws_autoscaling_attachment.ecs,
     aws_internet_gateway.main 
   ]
+
+  lifecycle {
+    # FIX: Prevents Terraform from resetting task counts if changed by AWS scaling
+    ignore_changes = [desired_count]
+  }
 }

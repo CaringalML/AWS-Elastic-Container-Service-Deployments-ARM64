@@ -5,26 +5,41 @@ Terraform infrastructure for deploying a containerized application on AWS ECS wi
 ## Architecture
 
 ```
-Internet → ALB (public) → EC2 t4g.micro/t4g.small (Graviton3, ARM64)
+Internet → ALB (public) → EC2 t4g.micro/t4g.small/t4g.medium (Graviton3, ARM64)
                                ↑
                         ECS Task (bridge mode)
-                        Provisioning: 1 On-Demand base + Spot for scale
+                        Provisioning: 100% Pure Spot
 ```
 
-You have **full control** over the EC2 instances — instance type, ASG min/max, scaling policies, and patching. Uses a **Mixed instances policy** to balance cost and stability.
+You have **full control** over the EC2 instances — instance type, ASG min/max, scaling policies, and patching. Uses **Pure Spot** for maximum cost savings.
 
-## Provisioning Model - Mixed Instances
+## Provisioning Model - Pure Spot
 
 | Scenario | Instance | Cost/month (USD) |
 |---|---|---|
-| 1 instance (base) | On-Demand t4g.micro | ~$8.50 |
-| Scale to 3 instances | 1 On-Demand + 2 Spot | ~$8.50 + ~$5.10 = ~$13.60 |
-| Scale to 5 instances | 1 On-Demand + 4 Spot | ~$8.50 + ~$10.20 = ~$18.70 |
+| 1 instance | Spot t4g.micro | ~$2.55 |
+| Scale to 3 instances | 3x Spot | ~$7.65 |
+| Scale to 5 instances | 5x Spot | ~$12.75 |
 
-- **1 On-Demand base** — always running, never interrupted, stable foundation
-- **All scale-up goes to Spot** — up to 70% cheaper than On-Demand
-- **Fallback instance types** — `t4g.micro` primary, `t4g.small` if micro Spot unavailable
+- **100% Spot** — zero On-Demand, maximum cost savings (up to 70% cheaper)
+- **3 fallback instance types** — `t4g.micro` → `t4g.small` → `t4g.medium` for better Spot availability
 - **Strategy** — `price-capacity-optimized` for best balance of price + availability
+- **⚠️ Trade-off** — Spot instances can be interrupted by AWS with 2 minutes notice
+
+## Scaling Triggers
+
+Two policies run simultaneously — whichever fires first wins:
+
+| Trigger | Condition | Action |
+|---|---|---|
+| Task demand | Pending tasks > available capacity | Scale out (1-5 instances) |
+| CPU | Average CPU > 70% | Scale out to bring CPU back to 70% |
+| Scale-in | Both CPU low + tasks have capacity | Drain tasks → terminate instance |
+
+**Cooldown & warmup settings:**
+- `instance_warmup_period = 60s` — time before new instance is included in scaling metrics
+- `managed_draining = ENABLED` — ECS drains tasks off instance before termination
+- `managed_termination_protection = ENABLED` — prevents ASG from killing instances with running tasks
 
 ## Fargate vs Managed vs Self-Managed
 
@@ -44,24 +59,24 @@ You have **full control** over the EC2 instances — instance type, ASG min/max,
 | Resource | Details |
 |---|---|
 | ECS Cluster | Fargate + Self-managed |
-| EC2 Instances | t4g.micro (primary) / t4g.small (fallback) |
+| EC2 Instances | t4g.micro → t4g.small → t4g.medium (Spot fallback chain) |
 | Architecture | Linux/ARM64 (Graviton3) |
 | Network mode | bridge |
 | vCPU | 0.25 |
 | Memory | 0.5 GB |
 | VPC | New VPC (10.0.0.0/16) |
 | Subnets | 3 public subnets (ap-southeast-2a/b/c) |
-| Task Public IP | ❌ None - EC2 SG blocks direct access |
+| Task Public IP | ❌ None - EC2 SG only allows ALB traffic |
 | ALB | ✅ Required |
 | ASG | ✅ You manage it |
-| Provisioning | Mixed (On-Demand base + Spot scale) |
+| Provisioning | Pure Spot (100%) |
 
 ## Files
 
 ```
-├── alb.tf                        # ALB, target group, listener, ASG attachment
+├── alb.tf                        # ALB, target group (instance type), listener, ASG attachment
 ├── cloudwatch.tf                 # CloudWatch log group
-├── cluster.tf                    # ECS cluster, ASG (mixed policy), launch template, capacity provider
+├── cluster.tf                    # ECS cluster, ASG (pure spot), launch template, capacity provider
 ├── ecs-self-managed-service.tf   # ECS service only
 ├── iam.tf                        # Task execution role, task role, instance role
 ├── outputs.tf                    # Output values after apply
@@ -121,7 +136,7 @@ terraform destroy -var="log_group_skip_destroy=false"
 | `asg_min_size` | `1` | ASG minimum instances |
 | `asg_max_size` | `5` | ASG maximum instances |
 | `asg_desired_capacity` | `1` | ASG desired instances |
-| `log_group_skip_destroy` | `true` | Preserve logs on terraform destroy |
+| `log_group_skip_destroy` | `false` | Delete logs on terraform destroy |
 
 ## CI/CD
 
