@@ -22,8 +22,14 @@ variable "container_port" {
   default     = 80
 }
 
+variable "host_port" {
+  description = "Port on EC2 host mapped to container port (bridge mode)"
+  type        = number
+  default     = 80
+}
+
 variable "task_cpu" {
-  description = "Task CPU units (1024 = 1 vCPU)"
+  description = "Task CPU units (256 = 0.25 vCPU)"
   type        = number
   default     = 256
 }
@@ -36,6 +42,24 @@ variable "task_memory" {
 
 variable "desired_count" {
   description = "Number of tasks to run"
+  type        = number
+  default     = 1
+}
+
+variable "asg_min_size" {
+  description = "Minimum number of EC2 instances in ASG"
+  type        = number
+  default     = 1
+}
+
+variable "asg_max_size" {
+  description = "Maximum number of EC2 instances in ASG"
+  type        = number
+  default     = 5
+}
+
+variable "asg_desired_capacity" {
+  description = "Desired number of EC2 instances in ASG"
   type        = number
   default     = 1
 }

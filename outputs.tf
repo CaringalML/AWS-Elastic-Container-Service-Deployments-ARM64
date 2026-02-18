@@ -1,3 +1,8 @@
+output "alb_dns_name" {
+  description = "ALB DNS name - use this to access your app"
+  value       = "http://${aws_lb.main.dns_name}"
+}
+
 output "ecs_cluster_name" {
   description = "ECS cluster name"
   value       = aws_ecs_cluster.main.name
@@ -28,7 +33,12 @@ output "cloudwatch_log_group" {
   value       = aws_cloudwatch_log_group.ecs.name
 }
 
-output "how_to_get_task_ip" {
-  description = "How to get the public IP of your running task"
-  value       = "Go to ECS → Cluster → Tasks → click task → copy Public IP, then open http://<public-ip>"
+output "asg_name" {
+  description = "Auto Scaling Group name"
+  value       = aws_autoscaling_group.ecs.name
+}
+
+output "provisioning_model" {
+  description = "Provisioning model used"
+  value       = "Mixed - 1 On-Demand base + Spot for scale (t4g.micro / t4g.small)"
 }
