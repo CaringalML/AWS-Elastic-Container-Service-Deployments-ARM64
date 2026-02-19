@@ -26,6 +26,24 @@ You have **full control** over the EC2 instances — instance type, ASG min/max,
 - **Fallback instance types** — `t4g.micro` primary, `t4g.small` if micro Spot unavailable
 - **Strategy** — `price-capacity-optimized` for best balance of price + availability
 
+## Scaling
+
+Uses a **single scaling policy** — ECS managed scaling driven purely by task demand. One clear signal, one decision maker.
+
+| Trigger | Condition | Action |
+|---|---|---|
+| Task demand | Pending tasks > available capacity | Scale out/in (1–5 instances) |
+
+**How it works:** The ECS capacity provider watches for pending tasks that can't be placed due to insufficient capacity. When it sees them, it signals the ASG to add instances. When tasks free up capacity, it drains and terminates instances.
+
+**Settings:**
+- `target_capacity = 100` — scale to exactly meet task demand, no over-provisioning
+- `instance_warmup_period = 60s` — new instance waits 60s before being counted in scaling metrics
+- `managed_draining = ENABLED` — tasks are gracefully drained before instance termination
+- `managed_termination_protection = ENABLED` — prevents ASG from terminating instances that still have running tasks
+
+> Why one policy? Two competing scaling policies (e.g. task demand + CPU) can fight each other — one scales out while the other scales in, leading to flapping. A single task-demand policy gives ECS full, unambiguous control.
+
 ## Fargate vs Managed vs Self-Managed
 
 | | Fargate | Fargate + Managed | Fargate + Self-Managed |
@@ -125,10 +143,46 @@ terraform destroy -var="log_group_skip_destroy=false"
 
 ## CI/CD
 
-Docker image is built and pushed automatically via GitHub Actions using a native ARM64 runner:
+The Docker image is built and pushed automatically via GitHub Actions on every push or pull request to `main`. The workflow uses a **native ARM64 GitHub-hosted runner** (`ubuntu-24.04-arm`) — no QEMU emulation, no cross-compilation overhead.
+
+`.github/workflows/build-arm64.yml`:
 
 ```yaml
-runs-on: ubuntu-24.04-arm  # Native ARM64 - no QEMU emulation
+name: Build ARM64 and Push to Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 GitHub-hosted runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push ARM64 image
+        run: |
+          docker build -t rencecaringal000/helloworldarm64:latest .
+          docker push rencecaringal000/helloworldarm64:latest
 ```
 
-See `.github/workflows/build-arm64.yml` for the full pipeline.
+### Required GitHub Secrets
+
+Add these secrets to your repository under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| `DOCKERHUB_TOKEN` | Your Docker Hub password |
