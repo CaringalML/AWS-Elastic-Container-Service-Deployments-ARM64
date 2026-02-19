@@ -26,20 +26,23 @@ You have **full control** over the EC2 instances — instance type, ASG min/max,
 - **Strategy** — `price-capacity-optimized` for best balance of price + availability
 - **⚠️ Trade-off** — Spot instances can be interrupted by AWS with 2 minutes notice
 
-## Scaling Triggers
+## Scaling
 
-Two policies run simultaneously — whichever fires first wins:
+Uses a **single scaling policy** — ECS managed scaling driven purely by task demand. One clear signal, one decision maker.
 
 | Trigger | Condition | Action |
 |---|---|---|
-| Task demand | Pending tasks > available capacity | Scale out (1-5 instances) |
-| CPU | Average CPU > 70% | Scale out to bring CPU back to 70% |
-| Scale-in | Both CPU low + tasks have capacity | Drain tasks → terminate instance |
+| Task demand | Pending tasks > available capacity | Scale out/in (1–5 instances) |
 
-**Cooldown & warmup settings:**
-- `instance_warmup_period = 60s` — time before new instance is included in scaling metrics
-- `managed_draining = ENABLED` — ECS drains tasks off instance before termination
-- `managed_termination_protection = ENABLED` — prevents ASG from killing instances with running tasks
+**How it works:** The ECS capacity provider watches for pending tasks that can't be placed due to insufficient capacity. When it sees them, it signals the ASG to add instances. When tasks free up capacity, it drains and terminates instances.
+
+**Settings:**
+- `target_capacity = 100` — scale to exactly meet task demand, no over-provisioning
+- `instance_warmup_period = 60s` — new instance waits 60s before being counted in scaling metrics
+- `managed_draining = ENABLED` — tasks are gracefully drained before instance termination
+- `managed_termination_protection = ENABLED` — prevents ASG from terminating instances that still have running tasks
+
+> Why one policy? Two competing scaling policies (e.g. task demand + CPU) can fight each other — one scales out while the other scales in, leading to flapping. A single task-demand policy gives ECS full, unambiguous control.
 
 ## Fargate vs Managed vs Self-Managed
 
