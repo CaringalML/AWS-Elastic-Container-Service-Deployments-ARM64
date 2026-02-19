@@ -140,10 +140,46 @@ terraform destroy -var="log_group_skip_destroy=false"
 
 ## CI/CD
 
-Docker image is built and pushed automatically via GitHub Actions using a native ARM64 runner:
+The Docker image is built and pushed automatically via GitHub Actions on every push or pull request to `main`. The workflow uses a **native ARM64 GitHub-hosted runner** (`ubuntu-24.04-arm`) — no QEMU emulation, no cross-compilation overhead.
+
+`.github/workflows/build-arm64.yml`:
 
 ```yaml
-runs-on: ubuntu-24.04-arm  # Native ARM64 - no QEMU emulation
+name: Build ARM64 and Push to Docker Hub
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-arm  # Native ARM64 GitHub-hosted runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push ARM64 image
+        run: |
+          docker build -t rencecaringal000/helloworldarm64:latest .
+          docker push rencecaringal000/helloworldarm64:latest
 ```
 
-See `.github/workflows/build-arm64.yml` for the full pipeline.
+### Required GitHub Secrets
+
+Add these secrets to your repository under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| `DOCKERHUB_TOKEN` | Your Docker Hub password |
