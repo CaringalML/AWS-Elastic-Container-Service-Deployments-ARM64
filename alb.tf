@@ -12,17 +12,17 @@ resource "aws_lb" "main" {
 
 resource "aws_lb_target_group" "main" {
   name        = "${var.project_name}-tg"
-  port        = var.host_port
+  port        = var.container_port
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
-  target_type = "instance" # bridge mode uses instance target type, not ip
+  target_type = "ip" # Required for awsvpc mode to route to Task IPs
 
   health_check {
     enabled             = true
     path                = "/"
     protocol            = "HTTP"
     port                = "traffic-port"
-    healthy_threshold   = 5
+    healthy_threshold   = 3
     unhealthy_threshold = 2
     timeout             = 5
     interval            = 30
@@ -45,9 +45,5 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# Attach ASG to ALB target group
-# ECS registers/deregisters EC2 instances automatically
-resource "aws_autoscaling_attachment" "ecs" {
-  autoscaling_group_name = aws_autoscaling_group.ecs.name
-  lb_target_group_arn    = aws_lb_target_group.main.arn
-}
+# NOTE: aws_autoscaling_attachment is no longer required for awsvpc mode
+# as ECS registers individual Task IPs with the target group directly.

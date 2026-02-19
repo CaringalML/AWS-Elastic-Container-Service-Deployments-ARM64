@@ -17,16 +17,12 @@ variable "container_image" {
 }
 
 variable "container_port" {
-  description = "Port the container listens on"
+  description = "Port the container listens on (exposed directly in awsvpc mode)"
   type        = number
   default     = 80
 }
 
-variable "host_port" {
-  description = "Port on EC2 host mapped to container port (bridge mode)"
-  type        = number
-  default     = 80
-}
+# NOTE: var.host_port was removed as it is not used in awsvpc mode.
 
 variable "task_cpu" {
   description = "Task CPU units (256 = 0.25 vCPU)"

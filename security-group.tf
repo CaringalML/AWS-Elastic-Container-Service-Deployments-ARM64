@@ -1,24 +1,18 @@
+# 1. ALB Security Group (The Front Gate)
+# Allows public traffic only on standard web ports
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
-  description = "Security group for ALB - allows HTTP and HTTPS traffic"
+  description = "Security group for ALB - allows public HTTP traffic"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP"
+    description = "Public HTTP"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -26,23 +20,23 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.project_name}-alb-sg"
-  }
+  tags = { Name = "${var.project_name}-alb-sg" }
 }
 
-resource "aws_security_group" "ecs_instances" {
-  name        = "${var.project_name}-ecs-instances-sg"
-  description = "Security group for EC2 instances - allows traffic from ALB only"
+# 2. ECS Task Security Group (The "Lockdown" Layer)
+# Used only when network_mode = "awsvpc"
+# Only allows traffic from the ALB's Security Group
+resource "aws_security_group" "ecs_tasks" {
+  name        = "${var.project_name}-ecs-tasks-sg"
+  description = "Security group for ECS Tasks - allows traffic ONLY from ALB"
   vpc_id      = aws_vpc.main.id
 
-  # Bridge mode - ALB talks to EC2 instance host port
   ingress {
-    description     = "Allow traffic from ALB on host port"
-    from_port       = var.host_port
-    to_port         = var.host_port
+    description     = "Allow traffic ONLY from ALB SG"
+    from_port       = var.container_port
+    to_port         = var.container_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+    security_groups = [aws_security_group.alb.id] # This is the lock
   }
 
   egress {
@@ -52,7 +46,22 @@ resource "aws_security_group" "ecs_instances" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
-    Name = "${var.project_name}-ecs-instances-sg"
+  tags = { Name = "${var.project_name}-ecs-tasks-sg" }
+}
+
+# 3. EC2 Instance Security Group (Infrastructure Only)
+# Since you're using awsvpc, your app traffic DOES NOT go through this SG.
+resource "aws_security_group" "ecs_instances" {
+  name        = "${var.project_name}-ecs-instances-sg"
+  description = "Security group for EC2 hosts - No public app ports needed"
+  vpc_id      = aws_vpc.main.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = { Name = "${var.project_name}-ecs-instances-sg" }
 }

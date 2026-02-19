@@ -1,13 +1,12 @@
 resource "aws_ecs_task_definition" "main" {
   family                   = var.project_name
   requires_compatibilities = ["EC2"]
-  network_mode             = "bridge" # Self-managed uses bridge mode, not awsvpc
+  network_mode             = "awsvpc" # Changed from bridge to awsvpc 
   cpu                      = var.task_cpu
   memory                   = var.task_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  # ARM64 / Graviton
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "ARM64"
@@ -21,8 +20,8 @@ resource "aws_ecs_task_definition" "main" {
 
       portMappings = [
         {
-          hostPort      = var.host_port       # EC2 host port
-          containerPort = var.container_port  # Container port
+          # In awsvpc mode, containerPort and hostPort are the same
+          containerPort = var.container_port 
           protocol      = "tcp"
         }
       ]
@@ -37,8 +36,4 @@ resource "aws_ecs_task_definition" "main" {
       }
     }
   ])
-
-  tags = {
-    Name = "${var.project_name}-task-definition"
-  }
 }
