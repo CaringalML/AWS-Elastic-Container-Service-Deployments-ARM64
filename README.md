@@ -11,7 +11,7 @@ Internet → ALB (public) → EC2 t4g.micro/t4g.small (Graviton3, ARM64)
                         Provisioning: 1 On-Demand base + Spot for scale
 ```
 
-You have **full control** over the EC2 instances — instance type, ASG min/max, scaling policies, and patching. Uses a **Mixed instances policy** to balance cost and stability.
+You have **full control** over the EC2 instances — instance type, ASG min/max, and patching. Runs 1 On-Demand base instance for stability, with all scale-out going to Spot.
 
 ## Provisioning Model - Mixed Instances
 
