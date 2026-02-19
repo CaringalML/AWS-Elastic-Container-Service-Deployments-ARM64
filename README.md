@@ -1,13 +1,13 @@
-# ECS Fargate + Self-Managed Instances - ARM64 (Graviton) Terraform
+# ECS Self-Managed Instances - ARM64 (Graviton) Terraform
 
 Terraform infrastructure for deploying a containerized application on AWS ECS with self-managed EC2 instances using ARM64/Graviton architecture.
 
 ## Architecture
 
 ```
-Internet → ALB (public) → EC2 t4g.micro/t4g.small/t4g.medium (Graviton3, ARM64)
+Internet → ALB (public) → ECS Tasks (awsvpc mode, IP targets)
                                ↑
-                        ECS Task (bridge mode)
+                        EC2 t4g.micro/t4g.small/t4g.medium (Graviton, ARM64)
                         Provisioning: 100% Pure Spot
 ```
 
@@ -46,12 +46,12 @@ Uses a **single scaling policy** — ECS managed scaling driven purely by task d
 
 ## Fargate vs Managed vs Self-Managed
 
-| | Fargate | Fargate + Managed | Fargate + Self-Managed |
+| | Fargate | Fargate + Managed | Self-Managed (this repo) |
 |---|---|---|---|
 | EC2 under the hood | ❌ | ✅ AWS picks instance | ✅ You pick instance |
-| Network mode | awsvpc | awsvpc | bridge |
+| Network mode | awsvpc | awsvpc | awsvpc |
 | ALB required | ❌ | ✅ | ✅ |
-| Target type | ip | ip | instance |
+| Target type | ip | ip | ip |
 | You manage patching | ❌ | ❌ | ✅ |
 | You manage ASG | ❌ | ❌ | ✅ |
 | Spot support | ✅ FARGATE_SPOT | ❌ | ✅ Full control |
@@ -61,32 +61,53 @@ Uses a **single scaling policy** — ECS managed scaling driven purely by task d
 
 | Resource | Details |
 |---|---|
-| ECS Cluster | Fargate + Self-managed |
+| ECS Cluster | Self-managed EC2 with Container Insights enabled |
 | EC2 Instances | t4g.micro → t4g.small → t4g.medium (Spot fallback chain) |
-| Architecture | Linux/ARM64 (Graviton3) |
-| Network mode | bridge |
+| AMI | Latest ECS-optimized Amazon Linux 2023 ARM64 (fetched via SSM) |
+| Architecture | Linux/ARM64 (Graviton) |
+| Network mode | awsvpc |
 | vCPU | 0.25 |
 | Memory | 0.5 GB |
 | VPC | New VPC (10.0.0.0/16) |
 | Subnets | 3 public subnets (ap-southeast-2a/b/c) |
-| Task Public IP | ❌ None - EC2 SG only allows ALB traffic |
-| ALB | ✅ Required |
+| Task Public IP | ❌ None — task SG only allows traffic from ALB SG |
+| ALB target type | ip (required for awsvpc mode) |
 | ASG | ✅ You manage it |
 | Provisioning | Pure Spot (100%) |
+| CloudWatch Logs | `/ecs/hello-world-arm64` — 7-day retention |
+| Instance access | AWS Systems Manager Session Manager (no SSH needed) |
+
+## Security Groups
+
+Three security groups are created with least-privilege rules:
+
+| SG | Inbound | Outbound |
+|---|---|---|
+| `alb-sg` | Port 80 from anywhere (0.0.0.0/0) | All traffic |
+| `ecs-tasks-sg` | Container port from ALB SG only | All traffic |
+| `ecs-instances-sg` | None (no public ports) | All traffic |
+
+## IAM Roles
+
+| Role | Purpose |
+|---|---|
+| Task Execution Role | Pulls images, writes CloudWatch logs (`AmazonECSTaskExecutionRolePolicy`) |
+| Task Role | Permissions for your application code (no policies attached by default) |
+| Instance Role | Registers EC2 with ECS cluster + SSM Session Manager access |
 
 ## Files
 
 ```
-├── alb.tf                        # ALB, target group (instance type), listener, ASG attachment
-├── cloudwatch.tf                 # CloudWatch log group
+├── alb.tf                        # ALB, target group (ip type), HTTP listener
+├── cloudwatch.tf                 # CloudWatch log group (/ecs/<project_name>)
 ├── cluster.tf                    # ECS cluster, ASG (pure spot), launch template, capacity provider
-├── ecs-self-managed-service.tf   # ECS service only
-├── iam.tf                        # Task execution role, task role, instance role
+├── ecs-self-managed-service.tf   # ECS service (awsvpc mode, ip target type)
+├── iam.tf                        # Task execution role, task role, instance role + SSM policy
 ├── outputs.tf                    # Output values after apply
-├── security-group.tf             # ALB SG (public) + EC2 instances SG (ALB only)
-├── task-definition.tf            # ARM64 container definition (bridge mode)
+├── security-group.tf             # ALB SG, ECS tasks SG, EC2 instances SG
+├── task-definition.tf            # ARM64 container definition (awsvpc mode)
 ├── variables.tf                  # All configurable variables
-├── versions.tf                   # Terraform and provider versions
+├── versions.tf                   # Terraform >= 1.0, AWS provider ~> 5.0
 └── vpc.tf                        # VPC, subnets, IGW, route tables
 ```
 
@@ -133,13 +154,33 @@ terraform destroy -var="log_group_skip_destroy=false"
 | `project_name` | `hello-world-arm64` | Name prefix for all resources |
 | `container_image` | `rencecaringal000/helloworldarm64:latest` | Docker Hub image |
 | `container_port` | `80` | Container port |
-| `host_port` | `80` | EC2 host port mapped to container |
+| `host_port` | `80` | EC2 host port (reserved; not used in awsvpc mode) |
 | `task_cpu` | `256` | CPU units (256 = 0.25 vCPU) |
 | `task_memory` | `512` | Memory in MB |
+| `desired_count` | `1` | Number of ECS tasks to run |
 | `asg_min_size` | `1` | ASG minimum instances |
 | `asg_max_size` | `5` | ASG maximum instances |
-| `asg_desired_capacity` | `1` | ASG desired instances |
-| `log_group_skip_destroy` | `false` | Delete logs on terraform destroy |
+| `asg_desired_capacity` | `1` | ASG desired instances (ignored after first apply) |
+| `vpc_cidr` | `10.0.0.0/16` | CIDR block for the VPC |
+| `public_subnet_cidrs` | `["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]` | Public subnet CIDRs |
+| `availability_zones` | `["ap-southeast-2a", "ap-southeast-2b", "ap-southeast-2c"]` | Availability zones |
+| `log_group_skip_destroy` | `false` | If true, retain CloudWatch log group on destroy |
+
+> **Note:** `asg_desired_capacity` is ignored after the first `terraform apply` because the ASG lifecycle rule `ignore_changes = [desired_capacity]` prevents Terraform from overriding ECS-managed scaling decisions.
+
+## Outputs
+
+| Output | Description |
+|---|---|
+| `alb_dns_name` | HTTP URL of the ALB |
+| `ecs_cluster_name` | ECS cluster name |
+| `ecs_service_name` | ECS service name |
+| `task_definition_arn` | Full ARN of the task definition |
+| `vpc_id` | VPC ID |
+| `public_subnet_ids` | List of public subnet IDs |
+| `cloudwatch_log_group` | CloudWatch log group name |
+| `asg_name` | Auto Scaling Group name |
+| `provisioning_model` | Provisioning model summary |
 
 ## CI/CD
 
@@ -185,4 +226,4 @@ Add these secrets to your repository under **Settings → Secrets and variables 
 | Secret | Value |
 |---|---|
 | `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | Your Docker Hub password |
+| `DOCKERHUB_TOKEN` | Your Docker Hub password or access token |
