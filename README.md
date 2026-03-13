@@ -26,6 +26,28 @@ You have **full control** over the EC2 instances — instance type, ASG min/max,
 - **Fallback instance types** — `t4g.micro` primary, `t4g.small` if micro Spot unavailable
 - **Strategy** — `price-capacity-optimized` for best balance of price + availability
 
+### Instance Type Fallback — How It Works
+
+The ASG uses a **fallback chain**, not both types simultaneously:
+
+```mermaid
+flowchart TD
+    A[Scale Event Triggered] --> B{On-Demand base\nfilled?}
+    B -- No --> C[Launch t4g.micro\nOn-Demand]
+    B -- Yes → all extra goes Spot --> D{t4g.micro Spot\navailable?}
+    D -- Yes --> E[Launch t4g.micro Spot ✅]
+    D -- No --> F[Fallback: Launch t4g.small Spot ✅]
+```
+
+| | t4g.micro | t4g.small |
+|---|---|---|
+| vCPU | 2 | 2 |
+| RAM | 1 GB | 2 GB |
+| On-Demand price | ~$8.50/mo | ~$17.00/mo |
+| Spot price | ~$2.55/mo | ~$5.10/mo |
+
+Same CPU, just double the RAM. Both comfortably fit one 512 MB ECS task. The fallback exists because Spot availability fluctuates — having a second instance type means the ASG is less likely to get stuck during a scale-out event. AWS picks whichever type has the best combination of price and available capacity at that moment (`price-capacity-optimized`).
+
 ## Scaling
 
 Uses a **single scaling policy** — ECS managed scaling driven purely by task demand. One clear signal, one decision maker.
@@ -79,7 +101,7 @@ Uses a **single scaling policy** — ECS managed scaling driven purely by task d
 
 ```
 ├── alb.tf                        # ALB, target group (ip type), listener
-├── cloudwatch.tf                 # CloudWatch log group
+├── cloudwatch.tf                 # CloudWatch log group, SNS topic, alarms
 ├── cluster.tf                    # ECS cluster, ASG (mixed policy), launch template, capacity provider
 ├── ecs-self-managed-service.tf   # ECS service (awsvpc network config)
 ├── iam.tf                        # Task execution role, task role, instance role
@@ -106,6 +128,10 @@ terraform init
 terraform plan
 terraform apply
 ```
+
+### Confirm SNS email subscription
+
+After `terraform apply`, AWS sends a confirmation email to the address set in `var.alert_email`. **You must click "Confirm subscription" in that email before any alarm notifications are delivered.** Without confirmation, alarms will fire silently.
 
 ### Access the app
 
@@ -144,8 +170,25 @@ terraform destroy -var="log_group_skip_destroy=true"
 | `public_subnet_cidrs` | `["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]` | CIDR blocks for public subnets |
 | `availability_zones` | `["ap-southeast-2a", "ap-southeast-2b", "ap-southeast-2c"]` | Availability zones |
 | `log_group_skip_destroy` | `false` | Preserve CloudWatch logs on terraform destroy |
+| `alert_email` | `lawrencecaringal5@gmail.com` | Email address for CloudWatch alarm notifications |
 
 > **Note:** `host_port` has been removed. In `awsvpc` mode, ECS assigns each task its own ENI, so `containerPort` alone is sufficient — host port mapping is not applicable.
+
+## Monitoring & Alerts
+
+CloudWatch alarms are defined in `cloudwatch.tf`. Notifications are sent via SNS to the email in `var.alert_email`.
+
+| Alarm | Metric | Threshold | Meaning |
+|---|---|---|---|
+| `alb-unhealthy-hosts` | `UnHealthyHostCount` (max) | > 0 for 2 min | A task failed its health check |
+| `alb-5xx-errors` | `HTTPCode_ELB_5XX_Count` (sum) | > 10 in 60s for 2 periods | ALB returning server errors |
+| `ecs-low-running-tasks` | `RunningTaskCount` (min) | < 1 for 2 min | Service has no running tasks |
+| `ecs-cpu-high` | `CpuUtilized` (avg) | > 80% for 3 min | CPU pressure — consider scaling out |
+| `ecs-memory-high` | `MemoryUtilized` (avg) | > 80% for 3 min | Memory pressure — risk of OOM kill |
+
+> The ECS alarms (`ecs-*`) rely on **Container Insights**, which is already enabled on the cluster. Do not disable it.
+
+> **After `terraform apply`:** AWS sends a confirmation email to `lawrencecaringal5@gmail.com`. You must click **Confirm subscription** before any notifications are delivered.
 
 ## CI/CD
 

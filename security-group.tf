@@ -1,12 +1,27 @@
+# ==============================================================================
+# SECURITY GROUPS - Layered Network Access Control
+# ==============================================================================
+# Three security groups form a chain, each narrower than the last:
+#
+#   Internet → [ALB SG] → [ECS Tasks SG] → (EC2 Instances SG — infra only)
+#
+# The key lock is that the ECS Tasks SG only accepts traffic FROM the ALB SG,
+# not from the open internet. This means even if a task IP were somehow
+# exposed, direct access would be blocked.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
 # 1. ALB Security Group (The Front Gate)
-# Allows public traffic only on standard web ports
+# Accepts HTTP traffic from the public internet and forwards it to the tasks.
+# All egress is open so the ALB can reach task IPs in any subnet.
+# ------------------------------------------------------------------------------
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
   description = "Security group for ALB - allows public HTTP traffic"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "Public HTTP"
+    description = "Public HTTP from internet"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -23,20 +38,23 @@ resource "aws_security_group" "alb" {
   tags = { Name = "${var.project_name}-alb-sg" }
 }
 
-# 2. ECS Task Security Group (The "Lockdown" Layer)
-# Used only when network_mode = "awsvpc"
-# Only allows traffic from the ALB's Security Group
+# ------------------------------------------------------------------------------
+# 2. ECS Tasks Security Group (The Lockdown Layer)
+# Attached to each task's ENI (awsvpc mode gives every task its own ENI).
+# Only allows inbound traffic sourced from the ALB security group — not a
+# CIDR, but the SG reference itself, so only ALB-originated connections pass.
+# ------------------------------------------------------------------------------
 resource "aws_security_group" "ecs_tasks" {
   name        = "${var.project_name}-ecs-tasks-sg"
   description = "Security group for ECS Tasks - allows traffic ONLY from ALB"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description     = "Allow traffic ONLY from ALB SG"
+    description     = "Allow traffic only from ALB security group"
     from_port       = var.container_port
     to_port         = var.container_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id] # This is the lock
+    security_groups = [aws_security_group.alb.id] # SG reference, not a CIDR — tighter control
   }
 
   egress {
@@ -49,11 +67,17 @@ resource "aws_security_group" "ecs_tasks" {
   tags = { Name = "${var.project_name}-ecs-tasks-sg" }
 }
 
+# ------------------------------------------------------------------------------
 # 3. EC2 Instance Security Group (Infrastructure Only)
-# Since you're using awsvpc, your app traffic DOES NOT go through this SG.
+# Attached to the EC2 host, NOT to the container ENIs.
+# In awsvpc mode, application traffic bypasses this SG entirely and hits the
+# task SG above. This SG is kept minimal — no inbound rules needed because:
+#   - SSH is replaced by SSM Session Manager (no port required)
+#   - App traffic goes directly to task ENIs
+# ------------------------------------------------------------------------------
 resource "aws_security_group" "ecs_instances" {
   name        = "${var.project_name}-ecs-instances-sg"
-  description = "Security group for EC2 hosts - No public app ports needed"
+  description = "Security group for EC2 hosts - no public app ports needed in awsvpc mode"
   vpc_id      = aws_vpc.main.id
 
   egress {

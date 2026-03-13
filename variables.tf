@@ -83,3 +83,9 @@ variable "log_group_skip_destroy" {
   type        = bool
   default     = false
 }
+
+variable "alert_email" {
+  description = "Email address to receive CloudWatch alarm notifications via SNS"
+  type        = string
+  default     = "lawrencecaringal5@gmail.com"
+}

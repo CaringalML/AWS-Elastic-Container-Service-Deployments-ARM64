@@ -42,3 +42,19 @@ output "provisioning_model" {
   description = "Provisioning model used"
   value       = "Mixed - 1 On-Demand base + Spot for scale (t4g.micro / t4g.small)"
 }
+
+output "sns_topic_arn" {
+  description = "SNS topic ARN for CloudWatch alarm notifications"
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "cloudwatch_alarms" {
+  description = "CloudWatch alarm names"
+  value = [
+    aws_cloudwatch_metric_alarm.alb_unhealthy_hosts.alarm_name,
+    aws_cloudwatch_metric_alarm.alb_5xx_errors.alarm_name,
+    aws_cloudwatch_metric_alarm.ecs_running_tasks.alarm_name,
+    aws_cloudwatch_metric_alarm.ecs_cpu_high.alarm_name,
+    aws_cloudwatch_metric_alarm.ecs_memory_high.alarm_name,
+  ]
+}

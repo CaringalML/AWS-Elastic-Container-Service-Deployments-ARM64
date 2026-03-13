@@ -1,15 +1,34 @@
+# ==============================================================================
+# ALB - Application Load Balancer
+# ==============================================================================
+# Sits in front of the ECS tasks and distributes HTTP traffic.
+#
+# Target type is "ip" (not "instance") because ECS tasks run in awsvpc mode —
+# each task gets its own ENI with a private IP, so the ALB routes directly to
+# task IPs rather than to the EC2 instance ports.
+#
+# aws_autoscaling_attachment is NOT used here because in awsvpc mode ECS
+# registers/deregisters task IPs with the target group automatically.
+# ==============================================================================
+
 resource "aws_lb" "main" {
   name               = var.project_name
-  internal           = false
+  internal           = false          # Internet-facing ALB
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
+  subnets            = aws_subnet.public[*].id # Deployed across all public subnets
 
   tags = {
     Name = "${var.project_name}-alb"
   }
 }
 
+# ------------------------------------------------------------------------------
+# Target Group
+# Receives forwarded requests from the listener and routes them to task IPs.
+# Health checks poll "/" every 30 seconds; 2 failures → unhealthy,
+# 3 successes → healthy again.
+# ------------------------------------------------------------------------------
 resource "aws_lb_target_group" "main" {
   name        = "${var.project_name}-tg"
   port        = var.container_port
@@ -34,6 +53,10 @@ resource "aws_lb_target_group" "main" {
   }
 }
 
+# ------------------------------------------------------------------------------
+# HTTP Listener (port 80)
+# Forwards all incoming HTTP traffic to the target group.
+# ------------------------------------------------------------------------------
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80
