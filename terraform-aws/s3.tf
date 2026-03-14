@@ -9,7 +9,8 @@
 # ==============================================================================
 
 resource "aws_s3_bucket" "media" {
-  bucket = "${var.project_name}-media"
+  bucket        = "${var.project_name}-media"
+  force_destroy = var.s3_force_destroy
 
   tags = {
     Name = "${var.project_name}-media"

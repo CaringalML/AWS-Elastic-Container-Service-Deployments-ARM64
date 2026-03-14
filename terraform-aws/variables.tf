@@ -85,6 +85,12 @@ variable "skip_final_snapshot" {
   default     = true
 }
 
+variable "s3_force_destroy" {
+  description = "Allow S3 bucket to be destroyed even if it contains objects (true for dev, false for prod)"
+  type        = bool
+  default     = true
+}
+
 
 variable "container_port" {
   description = "Port the container listens on (exposed directly in awsvpc mode)"
