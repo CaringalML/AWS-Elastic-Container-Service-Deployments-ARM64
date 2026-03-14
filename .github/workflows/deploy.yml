@@ -1,0 +1,70 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches:
+      - EC2-dev-v3
+
+env:
+  AWS_REGION:             ap-southeast-2
+  ECR_REPOSITORY:         employee-crud
+  ECS_CLUSTER:            caringal-web-app
+  ECS_SERVICE:            caringal-web-app-service
+  TASK_DEFINITION_FAMILY: caringal-web-app
+  CONTAINER_NAME:         caringal-web-app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image to ECR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          platforms: linux/arm64
+
+      # Pull the live task definition from ECS so we don't overwrite Secrets Manager
+      # references or other settings managed by Terraform
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.TASK_DEFINITION_FAMILY }} \
+            --query taskDefinition \
+            > task-definition.json
+
+      # Swap only the image URI — everything else stays the same
+      - name: Render new task definition with updated image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition:  task-definition.json
+          container-name:   ${{ env.CONTAINER_NAME }}
+          image:            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+
+      # Register the new task definition revision and update the service
+      # wait-for-service-stability blocks until the rolling deploy completes or fails
+      - name: Deploy to ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:           ${{ steps.task-def.outputs.task-definition }}
+          service:                   ${{ env.ECS_SERVICE }}
+          cluster:                   ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true

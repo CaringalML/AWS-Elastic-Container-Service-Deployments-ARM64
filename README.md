@@ -1,237 +1,397 @@
-# ECS Self-Managed Instances - ARM64 (Graviton) Terraform
+# Employee CRUD — Laravel + Inertia.js + React + Supabase Real-Time
 
-Terraform infrastructure for deploying a containerized application on AWS ECS with self-managed EC2 instances using ARM64/Graviton architecture.
+A full-stack employee management application with **real-time updates** powered by Supabase Realtime. Built with Laravel (backend), Inertia.js + React (frontend), and PostgreSQL via Supabase (database). Containerized with Docker and deployable to AWS ECS Fargate via Terraform.
 
-## Architecture
+---
 
-```
-Internet → ALB (public) → ECS Task (awsvpc mode, no public IP)
-                               ↑
-                        EC2 t4g.micro/t4g.small (Graviton, ARM64)
-                        Provisioning: 1 On-Demand base + Spot for scale
-```
+## Tech Stack
 
-You have **full control** over the EC2 instances — instance type, ASG min/max, and patching. Runs 1 On-Demand base instance for stability, with all scale-out going to Spot.
+| Layer          | Technology                                      |
+| -------------- | ----------------------------------------------- |
+| Backend        | Laravel 11 (PHP 8.2)                            |
+| Frontend       | React 18 + Inertia.js                           |
+| Database       | PostgreSQL (Supabase)                            |
+| Real-Time      | Supabase Realtime (WebSocket)                    |
+| CSS            | Tailwind CSS                                     |
+| Containerization | Docker (multi-stage, Nginx + PHP-FPM + Supervisor) |
+| CI/CD          | GitHub Actions (ARM64 native build)              |
+| Infrastructure | Terraform (AWS ECS Fargate on Graviton)          |
+| Registry       | Docker Hub                                       |
 
-## Provisioning Model - Mixed Instances
+---
 
-| Scenario | Instance | Cost/month (USD) |
-|---|---|---|
-| 1 instance (base) | On-Demand t4g.micro | ~$8.50 |
-| Scale to 3 instances | 1 On-Demand + 2 Spot | ~$8.50 + ~$5.10 = ~$13.60 |
-| Scale to 5 instances | 1 On-Demand + 4 Spot | ~$8.50 + ~$10.20 = ~$18.70 |
-
-- **1 On-Demand base** — always running, never interrupted, stable foundation
-- **All scale-up goes to Spot** — up to 70% cheaper than On-Demand
-- **Fallback instance types** — `t4g.micro` primary, `t4g.small` if micro Spot unavailable
-- **Strategy** — `price-capacity-optimized` for best balance of price + availability
-
-### Instance Type Fallback — How It Works
-
-The ASG uses a **fallback chain**, not both types simultaneously:
-
-```mermaid
-flowchart TD
-    A[Scale Event Triggered] --> B{On-Demand base\nfilled?}
-    B -- No --> C[Launch t4g.micro\nOn-Demand]
-    B -- Yes → all extra goes Spot --> D{t4g.micro Spot\navailable?}
-    D -- Yes --> E[Launch t4g.micro Spot ✅]
-    D -- No --> F[Fallback: Launch t4g.small Spot ✅]
-```
-
-| | t4g.micro | t4g.small |
-|---|---|---|
-| vCPU | 2 | 2 |
-| RAM | 1 GB | 2 GB |
-| On-Demand price | ~$8.50/mo | ~$17.00/mo |
-| Spot price | ~$2.55/mo | ~$5.10/mo |
-
-Same CPU, just double the RAM. Both comfortably fit one 512 MB ECS task. The fallback exists because Spot availability fluctuates — having a second instance type means the ASG is less likely to get stuck during a scale-out event. AWS picks whichever type has the best combination of price and available capacity at that moment (`price-capacity-optimized`).
-
-## Scaling
-
-Uses a **single scaling policy** — ECS managed scaling driven purely by task demand. One clear signal, one decision maker.
-
-| Trigger | Condition | Action |
-|---|---|---|
-| Task demand | Pending tasks > available capacity | Scale out/in (1–5 instances) |
-
-**How it works:** The ECS capacity provider watches for pending tasks that can't be placed due to insufficient capacity. When it sees them, it signals the ASG to add instances. When tasks free up capacity, it drains and terminates instances.
-
-**Settings:**
-- `target_capacity = 100` — scale to exactly meet task demand, no over-provisioning
-- `instance_warmup_period = 60s` — new instance waits 60s before being counted in scaling metrics
-- `managed_draining = ENABLED` — tasks are gracefully drained before instance termination
-- `managed_termination_protection = ENABLED` — prevents ASG from terminating instances that still have running tasks
-
-> Why one policy? Two competing scaling policies (e.g. task demand + CPU) can fight each other — one scales out while the other scales in, leading to flapping. A single task-demand policy gives ECS full, unambiguous control.
-
-## Fargate vs Managed vs Self-Managed
-
-| | Fargate | Fargate + Managed | Fargate + Self-Managed |
-|---|---|---|---|
-| EC2 under the hood | ❌ | ✅ AWS picks instance | ✅ You pick instance |
-| Network mode | awsvpc | awsvpc | awsvpc |
-| ALB required | ❌ | ✅ | ✅ |
-| Target type | ip | ip | ip |
-| You manage patching | ❌ | ❌ | ✅ |
-| You manage ASG | ❌ | ❌ | ✅ |
-| Spot support | ✅ FARGATE_SPOT | ❌ | ✅ Full control |
-| Cost | Highest | Lower | Lowest |
-
-## Infrastructure Overview
-
-| Resource | Details |
-|---|---|
-| ECS Cluster | Self-managed EC2 capacity provider |
-| EC2 Instances | t4g.micro (primary) / t4g.small (fallback) |
-| Architecture | Linux/ARM64 (Graviton) |
-| Network mode | awsvpc |
-| vCPU | 0.25 |
-| Memory | 0.5 GB |
-| VPC | New VPC (10.0.0.0/16) |
-| Subnets | 3 public subnets (ap-southeast-2a/b/c) |
-| Task Public IP | ❌ None (`assign_public_ip = false`) |
-| ALB Target Type | ip (routes to Task ENI IPs directly) |
-| ALB | ✅ Required |
-| ASG | ✅ You manage it |
-| Provisioning | Mixed (On-Demand base + Spot scale) |
-
-## Files
+## Project Structure
 
 ```
-├── alb.tf                        # ALB, target group (ip type), listener
-├── cloudwatch.tf                 # CloudWatch log group, SNS topic, alarms
-├── cluster.tf                    # ECS cluster, ASG (mixed policy), launch template, capacity provider
-├── ecs-self-managed-service.tf   # ECS service (awsvpc network config)
-├── iam.tf                        # Task execution role, task role, instance role
-├── outputs.tf                    # Output values after apply
-├── security-group.tf             # ALB SG (public) + ECS tasks SG (ALB only)
-├── task-definition.tf            # ARM64 container definition (awsvpc mode)
-├── variables.tf                  # All configurable variables
-├── versions.tf                   # Terraform and provider versions
-└── vpc.tf                        # VPC, subnets, IGW, route tables
+├── app/
+│   ├── Http/Controllers/EmployeeController.php   # CRUD operations
+│   ├── Http/Middleware/HandleInertiaRequests.php   # Flash message sharing
+│   └── Models/Employee.php
+├── resources/js/
+│   ├── lib/supabase.js                            # Supabase client (singleton)
+│   └── Pages/Employees/
+│       ├── Index.jsx                              # List + real-time subscription
+│       ├── Create.jsx                             # Create form
+│       └── Edit.jsx                               # Edit form
+├── terraform-aws/                                 # AWS ECS Fargate infrastructure
+│   ├── variables.tf                               # Variables + Laravel env vars
+│   ├── task-definition.tf                         # ECS task with env injection
+│   ├── ecs-fargate-service.tf
+│   ├── vpc.tf / security-group.tf / iam.tf
+│   ├── cluster.tf / cloudwatch.tf / outputs.tf
+│   └── versions.tf
+├── docker/
+│   ├── nginx.conf                                 # Nginx server config
+│   ├── supervisord.conf                           # Runs Nginx + PHP-FPM
+│   └── entrypoint.sh                              # Startup script (migrations, caching)
+├── .github/workflows/deploy.yml                   # CI/CD pipeline
+├── Dockerfile                                     # Multi-stage build (Node + Composer + PHP-FPM)
+└── .env                                           # Environment variables (not committed)
 ```
+
+---
 
 ## Prerequisites
 
-- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.0
-- AWS CLI configured with credentials
-- Docker image pushed to Docker Hub (`rencecaringal000/helloworldarm64:latest`)
+- PHP 8.2+
+- Composer
+- Node.js 20+
+- Docker
+- A [Supabase](https://supabase.com) project with PostgreSQL
 
-## Usage
+---
+
+## Local Development Setup
+
+### 1. Clone and Install Dependencies
+
+```bash
+git clone https://github.com/CaringalML/laravel-inertiareact.git
+cd laravel-inertiareact
+composer install
+npm install
+```
+
+### 2. Configure Environment
+
+Copy `.env.example` to `.env` and set these values:
+
+```env
+APP_KEY=base64:your-app-key-here
+
+# Supabase PostgreSQL via Connection Pooler
+
+# Supabase Real-Time (frontend)
+
+# Local PostgreSQL example
+DB_CONNECTION=pgsql
+DB_HOST=localhost
+DB_PORT=5432
+DB_DATABASE=postgres
+DB_USERNAME=postgres
+DB_PASSWORD=ENgineer_caringal2000
+DB_SSLMODE=prefer
+```
+
+### 3. Run Migrations
+
+```bash
+php artisan migrate
+```
+
+### 4. Start Development Servers
+
+```bash
+php artisan serve
+npm run dev
+```
+
+Visit `http://localhost:8000/employees`
+
+---
+
+## Supabase Configuration
+
+### Why Use the Connection Pooler Instead of Direct Connection (Critical)
+
+Local PostgreSQL provides a straightforward connection method without the need for a connection pooler.
+
+| Connection Type      | Hostname                                      | Port   | Resolves To | Works In Docker/ECS? |
+| -------------------- | --------------------------------------------- | ------ | ----------- | -------------------- |
+| **Direct**           | `db.your-project-ref.supabase.co`             | `5432` | **IPv6**    | ❌ No                |
+| **Connection Pooler** | `aws-1-ap-south-1.pooler.supabase.com`       | `6543` | **IPv4**    | ✅ Yes               |
+
+**The problem:** Supabase's direct database connection resolves to an **IPv6 address**. Most containerized environments — Docker, AWS ECS Fargate, GitHub Actions runners, and many cloud VMs — do not have IPv6 networking enabled by default. This causes `SQLSTATE[HY000] [2002] Connection refused` or DNS resolution failures when Laravel tries to connect to the database.
+
+**The fix:** Use the **connection pooler** (PgBouncer) instead. The pooler endpoint resolves to an **IPv4 address**, which is universally supported. This was the key fix that resolved database connection failures in Docker and ECS deployments.
+
+**Additional benefits of the pooler:**
+
+**How to get the pooler URL:**
+1. Go to Supabase Dashboard → **Connect** (top right)
+2. Select **Connection Pooler** (Transaction mode)
+3. Copy the host — it looks like: `aws-1-ap-south-1.pooler.supabase.com`
+4. The port is `6543` (not the default `5432`)
+
+```env
+# ✅ Correct — Connection Pooler (IPv4, works everywhere)
+
+# ❌ Wrong — Direct connection (IPv6, fails in Docker/ECS)
+```
+
+### Finding the Correct Pooler Region (Important)
+
+The pooler hostname contains an **AWS region** (e.g., `aws-1-ap-south-1`), and it **must match the actual region where your Supabase project is hosted**.
+
+The region shown on the Supabase project card (e.g., `AWS | ap-south-1`) is the actual region. This is also reflected in the pooler hostname: `aws-1-ap-south-1.pooler.supabase.com`. If you use the wrong region in the hostname, the connection will fail.
+
+**How to verify the correct region:**
+
+1. **From the Project Card** — On the Supabase Dashboard home page, each project card shows the region directly below the project name (e.g., `AWS | ap-south-1`).
+
+2. **From the Connect Dialog** — Go to Supabase Dashboard → **Connect** (top right button) → the pooler URL is displayed with the correct region already included. Always copy this directly.
+
+3. **From Project Settings** — Go to **Settings** → **General** → the **Region** field shows the actual AWS region.
+
+> **Rule of thumb:** Never manually construct the pooler hostname. Always copy it directly from the Supabase Dashboard → Connect page to avoid region mismatches.
+
+### Enable Real-Time on the Employees Table
+
+Supabase Realtime uses PostgreSQL's logical replication. You need to enable it for the `employees` table:
+
+**Step 1 — Enable Realtime on the table:**
+1. Go to Supabase Dashboard → **Database** → **Tables**
+2. Click on the `employees` table
+3. Toggle **Enable Realtime** to ON
+
+Or via SQL:
+
+```sql
+ALTER PUBLICATION supabase_realtime ADD TABLE employees;
+```
+
+**Step 2 — Enable Row Level Security (RLS) with a permissive policy:**
+
+Since the real-time subscription uses the **anon (public) key** in the browser, RLS must allow the anon role to receive change events. Without a policy, the anon key is blocked from seeing any data — even real-time events.
+
+1. Go to Supabase Dashboard → **Authentication** → **Policies**
+2. Click on the `employees` table
+3. Create a new policy:
+
+| Setting            | Value                   |
+| ------------------ | ----------------------- |
+| **Policy Name**    | `enable-realtime`       |
+| **Policy Command** | `ALL`                   |
+| **Target Roles**   | (leave empty = public)  |
+| **USING**          | `true`                  |
+| **WITH CHECK**     | `true`                  |
+
+Or via SQL:
+
+```sql
+ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "enable-realtime"
+ON public.employees
+FOR ALL
+TO public
+USING (true)
+WITH CHECK (true);
+```
+
+> **Why `true` / `true`?** This is a public CRUD app without authentication. Setting both `USING` (read filter) and `WITH CHECK` (write filter) to `true` allows the anon role full access. For production apps with auth, replace `true` with proper conditions like `auth.uid() = user_id`.
+
+### API Keys Explained
+
+Supabase provides two types of API keys:
+
+| Key              | Purpose                          | Safe in Browser? |
+| ---------------- | -------------------------------- | ---------------- |
+| **anon (public)**  | Client-side access, limited by RLS | ✅ Yes          |
+| **service_role (secret)** | Full admin access, bypasses RLS | ❌ Never       |
+
+This project uses the **anon key** in the frontend for real-time WebSocket subscriptions only. All actual CRUD operations go through Laravel directly to PostgreSQL (bypassing Supabase's API entirely).
+
+Find your keys in: Supabase Dashboard → **Settings** → **API Keys**
+
+---
+
+## How Real-Time Works
+
+```
+Browser (React)                    Supabase                    Laravel
+     │                                │                           │
+     │── WebSocket subscription ──────│                           │
+     │   (anon key, employees table)  │                           │
+     │                                │                           │
+     │                                │                           │
+     │── Create/Edit/Delete ──────────│───────────────────────────│
+     │   (Inertia.js form submit)     │  PostgreSQL direct conn   │
+     │                                │                           │
+     │                                │◄── DB change detected ────│
+     │◄── Real-time event ────────────│                           │
+     │                                │                           │
+     │── router.reload({only:         │                           │
+     │   ['employees']}) ─────────────│───────────────────────────│
+     │   (Inertia partial reload)     │  Fetch fresh data         │
+     │                                │                           │
+```
+
+1. The React `Index.jsx` component subscribes to `postgres_changes` on the `employees` table via Supabase Realtime WebSocket
+2. When any user creates/edits/deletes an employee (via Laravel), the change is written to PostgreSQL
+3. Supabase detects the change and pushes a real-time event to all connected clients
+4. The browser receives the event and calls `router.reload({ only: ['employees'] })` — an Inertia.js partial reload that fetches only the `employees` prop from Laravel without a full page reload
+5. The table updates instantly on all connected browsers
+
+---
+
+## Docker
+
+### Build Locally
+
+```bash
+docker build \
+  --build-arg VITE_SUPABASE_URL=https://your-project-ref.supabase.co \
+  --build-arg VITE_SUPABASE_ANON_KEY=your-anon-key \
+  -t employee-crud .
+```
+
+> The `VITE_` args are needed at build time because Vite inlines them into the JavaScript bundle during `npm run build`.
+
+### Run Locally
+
+```bash
+docker run -p 80:80 --env-file .env employee-crud
+```
+
+Visit `http://localhost`
+
+### Docker Architecture
+
+The Dockerfile uses a 3-stage multi-stage build:
+
+| Stage       | Base Image            | Purpose                                |
+| ----------- | --------------------- | -------------------------------------- |
+| `frontend`  | `node:20-alpine`      | Install npm deps, build Vite assets    |
+| `composer`  | `composer:2`          | Install PHP deps, optimize autoloader  |
+| `production`| `php:8.2-fpm-alpine`  | Final image: Nginx + PHP-FPM + Supervisor |
+
+The production image runs **Nginx** (reverse proxy) and **PHP-FPM** (application server) together using **Supervisor** in a single container. Config files are in the `docker/` directory:
+
+- `docker/nginx.conf` — Nginx server configuration
+- `docker/supervisord.conf` — Runs both Nginx and PHP-FPM
+- `docker/entrypoint.sh` — Runs migrations, caches config/routes on startup
+
+---
+
+## CI/CD — GitHub Actions
+
+The pipeline (`.github/workflows/deploy.yml`) builds an ARM64 Docker image and pushes it to Docker Hub on every push to `main`.
+
+**Key details:**
+- Uses `ubuntu-24.04-arm` runner for native ARM64 builds (no QEMU emulation — much faster)
+- Builds and pushes to `rencecaringal000/employee-crud:latest`
+- Passes Supabase env vars as build args from GitHub secrets
+
+### Required GitHub Secrets
+
+Add these in your repo: **Settings** → **Secrets and variables** → **Actions**
+
+| Secret                   | Value                                     |
+| ------------------------ | ----------------------------------------- |
+| `DOCKERHUB_TOKEN`        | Docker Hub access token                   |
+| `VITE_SUPABASE_URL`      | `https://your-project-ref.supabase.co`    |
+| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon public key             |
+
+---
+
+## AWS Infrastructure — Terraform
+
+The `terraform-aws/` directory contains Terraform configs to deploy the app on **AWS ECS Fargate with Graviton (ARM64)** processors.
+
+### Resources Created
+
+| Resource               | Description                                          |
+| ---------------------- | ---------------------------------------------------- |
+| VPC                    | Custom VPC with 3 public subnets across 3 AZs        |
+| Internet Gateway       | Allows public internet access                         |
+| Security Group         | Allows HTTP (port 80) ingress from anywhere           |
+| ECS Cluster            | Fargate cluster with container insights enabled       |
+| Task Definition        | ARM64 Fargate task with Laravel env vars injected     |
+| ECS Service            | Runs 1 task with public IP (no ALB needed)            |
+| IAM Roles              | Task execution role + task role                       |
+| CloudWatch Log Group   | 7-day log retention                                   |
 
 ### Deploy
 
 ```bash
+cd terraform-aws
+
+# Create terraform.tfvars with your credentials
+cat > terraform.tfvars <<EOF
+app_key     = "base64:your-app-key"
+db_host     = "aws-1-ap-south-1.pooler.supabase.com"
+db_port     = "6543"
+db_database = "postgres"
+db_username = "postgres.your-project-ref"
+db_password = "your-password"
+EOF
+
 terraform init
 terraform plan
 terraform apply
 ```
 
-### Confirm SNS email subscription
+### Access the App
 
-After `terraform apply`, AWS sends a confirmation email to the address set in `var.alert_email`. **You must click "Confirm subscription" in that email before any alarm notifications are delivered.** Without confirmation, alarms will fire silently.
+After `terraform apply`, get the public IP:
+1. Go to **AWS Console** → **ECS** → **Clusters** → **aws-web-app-infra**
+2. Click on **Tasks** → click the running task
+3. Copy the **Public IP**
+4. Open `http://<public-ip>` in your browser
 
-### Access the app
-
-After apply, the ALB DNS name is printed as output:
-```
-alb_dns_name = "http://hello-world-arm64-xxxxxx.ap-southeast-2.elb.amazonaws.com"
-```
-
-### Destroy
+### Tear Down
 
 ```bash
-# Delete everything (CloudWatch logs included by default)
-terraform destroy
-
-# Preserve CloudWatch logs on destroy
-terraform destroy -var="log_group_skip_destroy=true"
+terraform destroy --auto-approve
 ```
 
-> After destroy, manually delete the `/aws/ecs/containerinsights/hello-world-arm64/performance` log group from the CloudWatch console — it is auto-created by Container Insights and not managed by Terraform.
+---
 
-## Variables
+## Troubleshooting
 
-| Variable | Default | Description |
-|---|---|---|
-| `aws_region` | `ap-southeast-2` | AWS region |
-| `project_name` | `hello-world-arm64` | Name prefix for all resources |
-| `container_image` | `rencecaringal000/helloworldarm64:latest` | Docker Hub image |
-| `container_port` | `80` | Container port |
-| `task_cpu` | `256` | CPU units (256 = 0.25 vCPU) |
-| `task_memory` | `512` | Memory in MB |
-| `desired_count` | `1` | Number of ECS tasks to run |
-| `asg_min_size` | `1` | ASG minimum instances |
-| `asg_max_size` | `5` | ASG maximum instances |
-| `asg_desired_capacity` | `1` | ASG desired instances |
-| `vpc_cidr` | `10.0.0.0/16` | CIDR block for the VPC |
-| `public_subnet_cidrs` | `["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]` | CIDR blocks for public subnets |
-| `availability_zones` | `["ap-southeast-2a", "ap-southeast-2b", "ap-southeast-2c"]` | Availability zones |
-| `log_group_skip_destroy` | `false` | Preserve CloudWatch logs on terraform destroy |
-| `alert_email` | `lawrencecaringal5@gmail.com` | Email address for CloudWatch alarm notifications |
+### Database connection refused in Docker/ECS
 
-> **Note:** `host_port` has been removed. In `awsvpc` mode, ECS assigns each task its own ENI, so `containerPort` alone is sufficient — host port mapping is not applicable.
+**Cause:** Using Supabase's direct connection (IPv6) instead of the connection pooler (IPv4).
 
-## Monitoring & Alerts
-
-CloudWatch alarms are defined in `cloudwatch.tf`. Notifications are sent via SNS to the email in `var.alert_email`.
-
-| Alarm | Metric | Threshold | Meaning |
-|---|---|---|---|
-| `alb-unhealthy-hosts` | `UnHealthyHostCount` (max) | > 0 for 2 min | A task failed its health check |
-| `alb-5xx-errors` | `HTTPCode_ELB_5XX_Count` (sum) | > 10 in 60s for 2 periods | ALB returning server errors |
-| `ecs-low-running-tasks` | `RunningTaskCount` (min) | < 1 for 2 min | Service has no running tasks |
-| `ecs-cpu-high` | `CpuUtilized` (avg) | > 80% for 3 min | CPU pressure — consider scaling out |
-| `ecs-memory-high` | `MemoryUtilized` (avg) | > 80% for 3 min | Memory pressure — risk of OOM kill |
-
-> The ECS alarms (`ecs-*`) rely on **Container Insights**, which is already enabled on the cluster. Do not disable it.
-
-> **After `terraform apply`:** AWS sends a confirmation email to `lawrencecaringal5@gmail.com`. You must click **Confirm subscription** before any notifications are delivered.
-
-## CI/CD
-
-The Docker image is built and pushed automatically via GitHub Actions on every push or pull request to `main`. The workflow uses a **native ARM64 GitHub-hosted runner** (`ubuntu-24.04-arm`) — no QEMU emulation, no cross-compilation overhead.
-
-`.github/workflows/build-arm64.yml`:
-
-```yaml
-name: Build ARM64 and Push to Docker Hub
-
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-24.04-arm  # Native ARM64 GitHub-hosted runner
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push ARM64 image
-        run: |
-          docker build -t rencecaringal000/helloworldarm64:latest .
-          docker push rencecaringal000/helloworldarm64:latest
+**Fix:** Switch to the pooler URL:
+```env
+DB_HOST=aws-1-ap-south-1.pooler.supabase.com
+DB_PORT=6543
 ```
 
-### Required GitHub Secrets
+### Real-time not working (channel SUBSCRIBED but no events)
 
-Add these secrets to your repository under **Settings → Secrets and variables → Actions**:
+**Cause:** RLS is blocking the anon key from receiving change events.
 
-| Secret | Value |
-|---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | Your Docker Hub password |
+**Fix:**
+1. Ensure Realtime is enabled on the `employees` table (Database → Tables → toggle)
+2. Add an RLS policy with `USING (true)` and `WITH CHECK (true)` as described above
+
+### Multiple GoTrueClient instances warning
+
+**Cause:** Vite HMR recreates the Supabase client on hot reload during development.
+
+**Fix:** Already handled — the Supabase client uses a singleton pattern in `resources/js/lib/supabase.js`. This warning only appears in development and is harmless.
+
+### Full page reloads on button clicks
+
+**Cause:** `<button>` elements nested inside Inertia `<Link>` components. Since `<Link>` renders as `<a>`, having `<button>` inside `<a>` is invalid HTML — the button intercepts clicks before Inertia's SPA handler fires.
+
+**Fix:** Already applied — buttons are replaced with styled `<Link>` elements directly. Forms use Inertia's `useForm` hook which handles submissions via XHR.
+
+---
+
+## License
+
+This project is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
