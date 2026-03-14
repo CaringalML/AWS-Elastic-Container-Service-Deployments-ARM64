@@ -57,6 +57,16 @@ resource "aws_iam_policy" "ecs_update_taskdef" {
           "ecs:DescribeTaskDefinition",
         ]
         Resource = "*"
+      },
+      {
+        # RegisterTaskDefinition requires PassRole on both the task role and
+        # execution role that are embedded in the task definition being registered.
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = [
+          aws_iam_role.ecs_task_role.arn,
+          aws_iam_role.ecs_task_execution_role.arn,
+        ]
       }
     ]
   })
