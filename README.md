@@ -11,6 +11,12 @@ Live at: **https://nodepulsecaringal.xyz**
 ### Employee List
 ![Employee List](documentation/Home.png)
 
+### IoT Live Data Dashboard
+![IoT Live Data](documentation/IOT-home.png)
+
+### M5Stack Core 2 Hardware
+![M5Stack Core 2](documentation/m5stackmodule.jpg)
+
 ### CV / Resume Viewer (served via CloudFront CDN)
 ![CloudFront Document View](documentation/cloudfront-view-documents.png)
 
@@ -30,6 +36,8 @@ Live at: **https://nodepulsecaringal.xyz**
 | Infrastructure     | Terraform (AWS provider v5)                                       |
 | Container Registry | AWS ECR (lifecycle: keeps 2 most recent images)                   |
 | Compute            | AWS ECS EC2 launch type — Graviton3 ARM64, mixed On-Demand + Spot |
+| IoT Hardware       | M5Stack Core 2 (ESP32, touchscreen) — Arduino + AWS SigV4        |
+| IoT Ingestion      | AWS Kinesis Data Streams → Lambda (Python, pg8000) → PostgreSQL   |
 
 ---
 
@@ -41,6 +49,7 @@ Live at: **https://nodepulsecaringal.xyz**
 - **Live search** — client-side filter by name or email
 - **Status badges** — active / inactive with colour coding
 - **Secure secrets** — APP_KEY and DB credentials injected at runtime from AWS Secrets Manager (never in the image or environment variables plaintext)
+- **IoT Live Data** — M5Stack Core 2 sends button press events via Kinesis → Lambda → PostgreSQL; React dashboard polls every 3s showing device, event type, button, battery, and timestamp
 
 ---
 
@@ -76,6 +85,21 @@ CloudFront Distribution (OAC, SigV4)
 CI/CD:
 GitHub Actions → ECR push → EventBridge → Lambda
    └── RegisterTaskDefinition + UpdateService (force redeploy)
+
+IoT Pipeline:
+M5Stack Core 2 (ESP32, AWS SigV4 over HTTPS)
+   │  PutRecord
+   ▼
+Kinesis Data Stream (1 shard, 24h retention)
+   │  Event Source Mapping (pull, batch 10)
+   ▼
+Lambda — kinesis-to-rds (Python 3.11, ARM64, in VPC)
+   │  INSERT INTO iot_events
+   ▼
+RDS PostgreSQL (private subnet)
+   │  SELECT via Laravel IotEventController
+   ▼
+React IoT page (polls /iot-events every 3s)
 ```
 
 ---
@@ -85,14 +109,18 @@ GitHub Actions → ECR push → EventBridge → Lambda
 ```
 ├── app/
 │   ├── Http/Controllers/EmployeeController.php   # CRUD + S3 file upload/delete
+│   ├── Http/Controllers/IotEventController.php   # IoT events JSON API + Inertia page
 │   ├── Http/Middleware/HandleInertiaRequests.php  # Flash message sharing
-│   └── Models/Employee.php                        # profile_photo_url / resume_url appended
+│   ├── Models/Employee.php                        # profile_photo_url / resume_url appended
+│   └── Models/IotEvent.php                        # iot_events table model
 ├── bootstrap/
 │   └── app.php                                    # TrustProxies for ALB SSL termination
 ├── resources/js/Pages/Employees/
 │   ├── Index.jsx                                  # List with photo avatar + CV link
 │   ├── Create.jsx                                 # Create form with file inputs + preview
 │   └── Edit.jsx                                   # Edit form with current file display
+├── resources/js/Pages/IoT/
+│   └── Index.jsx                                  # Live IoT dashboard, polls every 3s
 ├── routes/web.php                                 # /health endpoint for ALB checks
 ├── database/migrations/
 │   └── 2026_03_14_000001_add_files_to_employees_table.php
@@ -115,10 +143,15 @@ GitHub Actions → ECR push → EventBridge → Lambda
 │   ├── ecr.tf               # ECR repo + lifecycle (keep 2 images) + VPC interface endpoints
 │   ├── iam.tf               # Task execution role, task role (S3 + Secrets), Lambda role, EC2 instance profile
 │   ├── lambda.tf            # Lambda + EventBridge trigger: auto-update ECS task def on ECR push
+│   ├── lambda-iot.tf        # IoT Lambda in VPC + Kinesis ESM + SG rules
+│   ├── kinesis.tf           # Kinesis Data Stream + IAM user for M5Stack device
+│   ├── lambda-python/kinesis-to-rds/handler.py     # Lambda: decode Kinesis → INSERT iot_events
 │   ├── eventbridge.tf       # ECR image push rule → Lambda target
 │   ├── cloudwatch.tf        # Log group + CloudWatch alarms (CPU, memory)
 │   ├── backup.tf            # AWS Backup plan (conditional on enable_backup)
 │   └── outputs.tf           # ALB DNS, ECR URL, RDS endpoint, CloudFront domain
+├── hardware/
+│   └── m5stack/m5stack_kinesis.ino   # Arduino sketch: SigV4, Kinesis PutRecord, touchscreen UI
 ├── docker/
 │   ├── nginx.conf           # Nginx: PHP-FPM pass, static asset caching, .php location
 │   ├── supervisord.conf     # Runs nginx + php-fpm under supervisor
