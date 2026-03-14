@@ -38,13 +38,15 @@ class EmployeeController extends Controller
         ]);
 
         if ($request->hasFile('profile_photo')) {
-            $validated['profile_photo'] = $request->file('profile_photo')
-                ->store('employees/photos');
+            $file     = $request->file('profile_photo');
+            $name     = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+            $validated['profile_photo'] = $file->storeAs('employees/photos', time() . '_' . $name . '.' . $file->getClientOriginalExtension());
         }
 
         if ($request->hasFile('resume')) {
-            $validated['resume'] = $request->file('resume')
-                ->store('employees/resumes');
+            $file     = $request->file('resume');
+            $name     = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+            $validated['resume'] = $file->storeAs('employees/resumes', time() . '_' . $name . '.' . $file->getClientOriginalExtension());
         }
 
         Employee::create($validated);
@@ -74,19 +76,23 @@ class EmployeeController extends Controller
         ]);
 
         if ($request->hasFile('profile_photo')) {
-            if ($employee->profile_photo) {
-                Storage::delete($employee->profile_photo);
-            }
-            $validated['profile_photo'] = $request->file('profile_photo')
-                ->store('employees/photos');
+            Storage::delete($employee->profile_photo);
+            $file     = $request->file('profile_photo');
+            $name     = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+            $validated['profile_photo'] = $file->storeAs('employees/photos', time() . '_' . $name . '.' . $file->getClientOriginalExtension());
+        } else {
+            // No new file uploaded — keep the existing value, don't overwrite with null
+            unset($validated['profile_photo']);
         }
 
         if ($request->hasFile('resume')) {
-            if ($employee->resume) {
-                Storage::delete($employee->resume);
-            }
-            $validated['resume'] = $request->file('resume')
-                ->store('employees/resumes');
+            Storage::delete($employee->resume);
+            $file     = $request->file('resume');
+            $name     = preg_replace('/[^a-zA-Z0-9._-]/', '_', pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
+            $validated['resume'] = $file->storeAs('employees/resumes', time() . '_' . $name . '.' . $file->getClientOriginalExtension());
+        } else {
+            // No new file uploaded — keep the existing value, don't overwrite with null
+            unset($validated['resume']);
         }
 
         $employee->update($validated);

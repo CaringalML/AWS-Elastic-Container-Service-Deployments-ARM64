@@ -1,22 +1,82 @@
-# Employee CRUD — Laravel + Inertia.js + React + Supabase Real-Time
+# Employee CRUD — Laravel + Inertia.js + React on AWS ECS (EC2 Graviton)
 
-A full-stack employee management application with **real-time updates** powered by Supabase Realtime. Built with Laravel (backend), Inertia.js + React (frontend), and PostgreSQL via Supabase (database). Containerized with Docker and deployable to AWS ECS Fargate via Terraform.
+A full-stack employee management application with **profile photo and CV/resume uploads**. Built with Laravel 11, Inertia.js + React 18, and PostgreSQL. Containerized with Docker and deployed to **AWS ECS on self-managed EC2 Graviton (ARM64)** via Terraform.
+
+Live at: **https://nodepulsecaringal.xyz**
+
+---
+
+## Screenshots
+
+### Employee List
+![Employee List](documentation/Home.png)
+
+### CV / Resume Viewer (served via CloudFront CDN)
+![CloudFront Document View](documentation/cloudfront-view-documents.png)
 
 ---
 
 ## Tech Stack
 
-| Layer          | Technology                                      |
-| -------------- | ----------------------------------------------- |
-| Backend        | Laravel 11 (PHP 8.2)                            |
-| Frontend       | React 18 + Inertia.js                           |
-| Database       | PostgreSQL (Supabase)                            |
-| Real-Time      | Supabase Realtime (WebSocket)                    |
-| CSS            | Tailwind CSS                                     |
-| Containerization | Docker (multi-stage, Nginx + PHP-FPM + Supervisor) |
-| CI/CD          | GitHub Actions (ARM64 native build)              |
-| Infrastructure | Terraform (AWS ECS Fargate on Graviton)          |
-| Registry       | Docker Hub                                       |
+| Layer              | Technology                                                        |
+| ------------------ | ----------------------------------------------------------------- |
+| Backend            | Laravel 11 (PHP 8.2)                                              |
+| Frontend           | React 18 + Inertia.js (SPA, no full-page reloads)                |
+| Database           | AWS RDS PostgreSQL 15 (t4g.micro, Graviton)                       |
+| File Storage       | AWS S3 Standard-IA + CloudFront CDN (OAC)                         |
+| CSS                | Tailwind CSS                                                      |
+| Containerization   | Docker — multi-stage (Node → Composer → PHP-FPM/Nginx/Supervisor) |
+| CI/CD              | GitHub Actions → ECR → EventBridge → Lambda → ECS                |
+| Infrastructure     | Terraform (AWS provider v5)                                       |
+| Container Registry | AWS ECR (lifecycle: keeps 2 most recent images)                   |
+| Compute            | AWS ECS EC2 launch type — Graviton3 ARM64, mixed On-Demand + Spot |
+
+---
+
+## Features
+
+- **Employee CRUD** — create, read, update, delete employees
+- **Profile photo upload** — stored in S3, served via CloudFront CDN
+- **CV / resume upload** — PDF/DOC/DOCX, viewable directly in browser via CloudFront
+- **Live search** — client-side filter by name or email
+- **Status badges** — active / inactive with colour coding
+- **Secure secrets** — APP_KEY and DB credentials injected at runtime from AWS Secrets Manager (never in the image or environment variables plaintext)
+
+---
+
+## Architecture Overview
+
+```
+Internet
+   │
+   ▼
+Route53 (nodepulsecaringal.xyz)
+   │  Alias record → ALB
+   ▼
+Application Load Balancer (HTTPS 443, ACM cert)
+   │  HTTP → HTTPS redirect
+   ▼
+ECS Service (awsvpc, 1 task)
+   │
+   ├── EC2 ASG (Graviton ARM64)
+   │     1 On-Demand base + Spot scale-out
+   │     t4g.micro / t4g.small
+   │
+   └── Container: Nginx + PHP-FPM + Supervisor
+         ├── Laravel 11 app
+         ├── Secrets injected by ECS agent (Secrets Manager)
+         └── S3 Gateway Endpoint → S3 bucket (free, no NAT cost)
+
+cdn.nodepulsecaringal.xyz
+   │  Route53 Alias → CloudFront
+   ▼
+CloudFront Distribution (OAC, SigV4)
+   └── S3 bucket (private, Standard-IA after 30 days)
+
+CI/CD:
+GitHub Actions → ECR push → EventBridge → Lambda
+   └── RegisterTaskDefinition + UpdateService (force redeploy)
+```
 
 ---
 
@@ -24,239 +84,112 @@ A full-stack employee management application with **real-time updates** powered 
 
 ```
 ├── app/
-│   ├── Http/Controllers/EmployeeController.php   # CRUD operations
-│   ├── Http/Middleware/HandleInertiaRequests.php   # Flash message sharing
-│   └── Models/Employee.php
-├── resources/js/
-│   ├── lib/supabase.js                            # Supabase client (singleton)
-│   └── Pages/Employees/
-│       ├── Index.jsx                              # List + real-time subscription
-│       ├── Create.jsx                             # Create form
-│       └── Edit.jsx                               # Edit form
-├── terraform-aws/                                 # AWS ECS Fargate infrastructure
-│   ├── variables.tf                               # Variables + Laravel env vars
-│   ├── task-definition.tf                         # ECS task with env injection
-│   ├── ecs-fargate-service.tf
-│   ├── vpc.tf / security-group.tf / iam.tf
-│   ├── cluster.tf / cloudwatch.tf / outputs.tf
-│   └── versions.tf
+│   ├── Http/Controllers/EmployeeController.php   # CRUD + S3 file upload/delete
+│   ├── Http/Middleware/HandleInertiaRequests.php  # Flash message sharing
+│   └── Models/Employee.php                        # profile_photo_url / resume_url appended
+├── bootstrap/
+│   └── app.php                                    # TrustProxies for ALB SSL termination
+├── resources/js/Pages/Employees/
+│   ├── Index.jsx                                  # List with photo avatar + CV link
+│   ├── Create.jsx                                 # Create form with file inputs + preview
+│   └── Edit.jsx                                   # Edit form with current file display
+├── routes/web.php                                 # /health endpoint for ALB checks
+├── database/migrations/
+│   └── 2026_03_14_000001_add_files_to_employees_table.php
+├── terraform-aws/
+│   ├── versions.tf          # Provider versions, aws.us_east_1 alias for CloudFront ACM
+│   ├── variables.tf         # All configurable variables with defaults
+│   ├── terraform.tfvars     # Your values (gitignored)
+│   ├── vpc.tf               # VPC, 2 public + 2 private subnets, IGW, NAT, route tables
+│   ├── security-group.tf    # ALB SG (80/443), ECS tasks SG, RDS SG, EC2 instances SG
+│   ├── cluster.tf           # ECS cluster, launch template, ASG (mixed), capacity provider
+│   ├── ecs-self-managed-service.tf  # ECS service, ALB target group registration
+│   ├── task-definition.tf   # Container spec: ARM64, env vars, secrets, health check
+│   ├── alb.tf               # ALB, listeners (HTTP→HTTPS redirect, HTTPS→ECS)
+│   ├── acm.tf               # ACM cert (ap-southeast-2) + DNS validation via Route53
+│   ├── route53.tf           # Alias records for apex + www → ALB
+│   ├── rds.tf               # RDS PostgreSQL 15, t4g.micro, Multi-AZ off, private subnet
+│   ├── secretsmanager.tf    # app_secrets (APP_KEY) + db_credentials (host/user/pass/etc.)
+│   ├── s3.tf                # Private media bucket, Standard-IA lifecycle, CORS, Gateway Endpoint, bucket policy
+│   ├── cloudfront.tf        # CloudFront OAC distribution, ACM cert (us-east-1), cdn.* alias
+│   ├── ecr.tf               # ECR repo + lifecycle (keep 2 images) + VPC interface endpoints
+│   ├── iam.tf               # Task execution role, task role (S3 + Secrets), Lambda role, EC2 instance profile
+│   ├── lambda.tf            # Lambda + EventBridge trigger: auto-update ECS task def on ECR push
+│   ├── eventbridge.tf       # ECR image push rule → Lambda target
+│   ├── cloudwatch.tf        # Log group + CloudWatch alarms (CPU, memory)
+│   ├── backup.tf            # AWS Backup plan (conditional on enable_backup)
+│   └── outputs.tf           # ALB DNS, ECR URL, RDS endpoint, CloudFront domain
 ├── docker/
-│   ├── nginx.conf                                 # Nginx server config
-│   ├── supervisord.conf                           # Runs Nginx + PHP-FPM
-│   └── entrypoint.sh                              # Startup script (migrations, caching)
-├── .github/workflows/deploy.yml                   # CI/CD pipeline
-├── Dockerfile                                     # Multi-stage build (Node + Composer + PHP-FPM)
-└── .env                                           # Environment variables (not committed)
+│   ├── nginx.conf           # Nginx: PHP-FPM pass, static asset caching, .php location
+│   ├── supervisord.conf     # Runs nginx + php-fpm under supervisor
+│   └── entrypoint.sh        # APP_KEY check, storage:link, route:cache, view:cache, migrate
+├── .github/workflows/deploy.yml   # CI/CD pipeline
+└── Dockerfile                     # 3-stage: frontend / composer / production
 ```
 
 ---
 
-## Prerequisites
+## Local Development
 
-- PHP 8.2+
-- Composer
+### Prerequisites
+
+- PHP 8.2+, Composer
 - Node.js 20+
-- Docker
-- A [Supabase](https://supabase.com) project with PostgreSQL
+- A local PostgreSQL instance
 
----
-
-## Local Development Setup
-
-### 1. Clone and Install Dependencies
+### 1. Install Dependencies
 
 ```bash
-git clone https://github.com/CaringalML/laravel-inertiareact.git
-cd laravel-inertiareact
 composer install
 npm install
 ```
 
 ### 2. Configure Environment
 
-Copy `.env.example` to `.env` and set these values:
+Copy `.env.example` to `.env`:
 
 ```env
-APP_KEY=base64:your-app-key-here
+APP_KEY=          # generate with: php artisan key:generate
+APP_URL=http://127.0.0.1:8000
 
-# Supabase PostgreSQL via Connection Pooler
-
-# Supabase Real-Time (frontend)
-
-# Local PostgreSQL example
 DB_CONNECTION=pgsql
-DB_HOST=localhost
+DB_HOST=127.0.0.1
 DB_PORT=5432
-DB_DATABASE=postgres
-DB_USERNAME=postgres
-DB_PASSWORD=ENgineer_caringal2000
-DB_SSLMODE=prefer
+DB_DATABASE=your_db
+DB_USERNAME=your_user
+DB_PASSWORD=your_password
+
+# Use local public disk for file uploads (S3 is production-only)
+FILESYSTEM_DISK=public
 ```
 
-### 3. Run Migrations
+### 3. Run Migrations and Link Storage
 
 ```bash
 php artisan migrate
+php artisan storage:link
 ```
 
-### 4. Start Development Servers
+### 4. Start Servers
 
 ```bash
 php artisan serve
 npm run dev
 ```
 
-Visit `http://localhost:8000/employees`
+Visit `http://127.0.0.1:8000/employees`
 
----
-
-## Supabase Configuration
-
-### Why Use the Connection Pooler Instead of Direct Connection (Critical)
-
-Local PostgreSQL provides a straightforward connection method without the need for a connection pooler.
-
-| Connection Type      | Hostname                                      | Port   | Resolves To | Works In Docker/ECS? |
-| -------------------- | --------------------------------------------- | ------ | ----------- | -------------------- |
-| **Direct**           | `db.your-project-ref.supabase.co`             | `5432` | **IPv6**    | ❌ No                |
-| **Connection Pooler** | `aws-1-ap-south-1.pooler.supabase.com`       | `6543` | **IPv4**    | ✅ Yes               |
-
-**The problem:** Supabase's direct database connection resolves to an **IPv6 address**. Most containerized environments — Docker, AWS ECS Fargate, GitHub Actions runners, and many cloud VMs — do not have IPv6 networking enabled by default. This causes `SQLSTATE[HY000] [2002] Connection refused` or DNS resolution failures when Laravel tries to connect to the database.
-
-**The fix:** Use the **connection pooler** (PgBouncer) instead. The pooler endpoint resolves to an **IPv4 address**, which is universally supported. This was the key fix that resolved database connection failures in Docker and ECS deployments.
-
-**Additional benefits of the pooler:**
-
-**How to get the pooler URL:**
-1. Go to Supabase Dashboard → **Connect** (top right)
-2. Select **Connection Pooler** (Transaction mode)
-3. Copy the host — it looks like: `aws-1-ap-south-1.pooler.supabase.com`
-4. The port is `6543` (not the default `5432`)
-
-```env
-# ✅ Correct — Connection Pooler (IPv4, works everywhere)
-
-# ❌ Wrong — Direct connection (IPv6, fails in Docker/ECS)
-```
-
-### Finding the Correct Pooler Region (Important)
-
-The pooler hostname contains an **AWS region** (e.g., `aws-1-ap-south-1`), and it **must match the actual region where your Supabase project is hosted**.
-
-The region shown on the Supabase project card (e.g., `AWS | ap-south-1`) is the actual region. This is also reflected in the pooler hostname: `aws-1-ap-south-1.pooler.supabase.com`. If you use the wrong region in the hostname, the connection will fail.
-
-**How to verify the correct region:**
-
-1. **From the Project Card** — On the Supabase Dashboard home page, each project card shows the region directly below the project name (e.g., `AWS | ap-south-1`).
-
-2. **From the Connect Dialog** — Go to Supabase Dashboard → **Connect** (top right button) → the pooler URL is displayed with the correct region already included. Always copy this directly.
-
-3. **From Project Settings** — Go to **Settings** → **General** → the **Region** field shows the actual AWS region.
-
-> **Rule of thumb:** Never manually construct the pooler hostname. Always copy it directly from the Supabase Dashboard → Connect page to avoid region mismatches.
-
-### Enable Real-Time on the Employees Table
-
-Supabase Realtime uses PostgreSQL's logical replication. You need to enable it for the `employees` table:
-
-**Step 1 — Enable Realtime on the table:**
-1. Go to Supabase Dashboard → **Database** → **Tables**
-2. Click on the `employees` table
-3. Toggle **Enable Realtime** to ON
-
-Or via SQL:
-
-```sql
-ALTER PUBLICATION supabase_realtime ADD TABLE employees;
-```
-
-**Step 2 — Enable Row Level Security (RLS) with a permissive policy:**
-
-Since the real-time subscription uses the **anon (public) key** in the browser, RLS must allow the anon role to receive change events. Without a policy, the anon key is blocked from seeing any data — even real-time events.
-
-1. Go to Supabase Dashboard → **Authentication** → **Policies**
-2. Click on the `employees` table
-3. Create a new policy:
-
-| Setting            | Value                   |
-| ------------------ | ----------------------- |
-| **Policy Name**    | `enable-realtime`       |
-| **Policy Command** | `ALL`                   |
-| **Target Roles**   | (leave empty = public)  |
-| **USING**          | `true`                  |
-| **WITH CHECK**     | `true`                  |
-
-Or via SQL:
-
-```sql
-ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "enable-realtime"
-ON public.employees
-FOR ALL
-TO public
-USING (true)
-WITH CHECK (true);
-```
-
-> **Why `true` / `true`?** This is a public CRUD app without authentication. Setting both `USING` (read filter) and `WITH CHECK` (write filter) to `true` allows the anon role full access. For production apps with auth, replace `true` with proper conditions like `auth.uid() = user_id`.
-
-### API Keys Explained
-
-Supabase provides two types of API keys:
-
-| Key              | Purpose                          | Safe in Browser? |
-| ---------------- | -------------------------------- | ---------------- |
-| **anon (public)**  | Client-side access, limited by RLS | ✅ Yes          |
-| **service_role (secret)** | Full admin access, bypasses RLS | ❌ Never       |
-
-This project uses the **anon key** in the frontend for real-time WebSocket subscriptions only. All actual CRUD operations go through Laravel directly to PostgreSQL (bypassing Supabase's API entirely).
-
-Find your keys in: Supabase Dashboard → **Settings** → **API Keys**
-
----
-
-## How Real-Time Works
-
-```
-Browser (React)                    Supabase                    Laravel
-     │                                │                           │
-     │── WebSocket subscription ──────│                           │
-     │   (anon key, employees table)  │                           │
-     │                                │                           │
-     │                                │                           │
-     │── Create/Edit/Delete ──────────│───────────────────────────│
-     │   (Inertia.js form submit)     │  PostgreSQL direct conn   │
-     │                                │                           │
-     │                                │◄── DB change detected ────│
-     │◄── Real-time event ────────────│                           │
-     │                                │                           │
-     │── router.reload({only:         │                           │
-     │   ['employees']}) ─────────────│───────────────────────────│
-     │   (Inertia partial reload)     │  Fetch fresh data         │
-     │                                │                           │
-```
-
-1. The React `Index.jsx` component subscribes to `postgres_changes` on the `employees` table via Supabase Realtime WebSocket
-2. When any user creates/edits/deletes an employee (via Laravel), the change is written to PostgreSQL
-3. Supabase detects the change and pushes a real-time event to all connected clients
-4. The browser receives the event and calls `router.reload({ only: ['employees'] })` — an Inertia.js partial reload that fetches only the `employees` prop from Laravel without a full page reload
-5. The table updates instantly on all connected browsers
+> **Note:** `FILESYSTEM_DISK=public` stores uploads in `storage/app/public` and serves them via `/storage/...`. In production, `FILESYSTEM_DISK=s3` stores them in S3 and serves via CloudFront. The `Storage::url()` call in the model handles both automatically.
 
 ---
 
 ## Docker
 
-### Build Locally
+### Build Locally (ARM64)
 
 ```bash
-docker build \
-  --build-arg VITE_SUPABASE_URL=https://your-project-ref.supabase.co \
-  --build-arg VITE_SUPABASE_ANON_KEY=your-anon-key \
-  -t employee-crud .
+docker build --platform linux/arm64 -t employee-crud .
 ```
-
-> The `VITE_` args are needed at build time because Vite inlines them into the JavaScript bundle during `npm run build`.
 
 ### Run Locally
 
@@ -264,77 +197,70 @@ docker build \
 docker run -p 80:80 --env-file .env employee-crud
 ```
 
-Visit `http://localhost`
+### Multi-Stage Build
 
-### Docker Architecture
+| Stage        | Base Image           | Purpose                                      |
+| ------------ | -------------------- | -------------------------------------------- |
+| `frontend`   | `node:20-alpine`     | `npm run build` — Vite assets into `public/build/` |
+| `composer`   | `composer:2`         | `composer install --no-dev`, optimized autoloader |
+| `production` | `php:8.2-fpm-alpine` | Nginx + PHP-FPM + Supervisor, final image    |
 
-The Dockerfile uses a 3-stage multi-stage build:
-
-| Stage       | Base Image            | Purpose                                |
-| ----------- | --------------------- | -------------------------------------- |
-| `frontend`  | `node:20-alpine`      | Install npm deps, build Vite assets    |
-| `composer`  | `composer:2`          | Install PHP deps, optimize autoloader  |
-| `production`| `php:8.2-fpm-alpine`  | Final image: Nginx + PHP-FPM + Supervisor |
-
-The production image runs **Nginx** (reverse proxy) and **PHP-FPM** (application server) together using **Supervisor** in a single container. Config files are in the `docker/` directory:
-
-- `docker/nginx.conf` — Nginx server configuration
-- `docker/supervisord.conf` — Runs both Nginx and PHP-FPM
-- `docker/entrypoint.sh` — Runs migrations, caches config/routes on startup
-
----
-
-## CI/CD — GitHub Actions
-
-The pipeline (`.github/workflows/deploy.yml`) builds an ARM64 Docker image and pushes it to Docker Hub on every push to `main`.
-
-**Key details:**
-- Uses `ubuntu-24.04-arm` runner for native ARM64 builds (no QEMU emulation — much faster)
-- Builds and pushes to `rencecaringal000/employee-crud:latest`
-- Passes Supabase env vars as build args from GitHub secrets
-
-### Required GitHub Secrets
-
-Add these in your repo: **Settings** → **Secrets and variables** → **Actions**
-
-| Secret                   | Value                                     |
-| ------------------------ | ----------------------------------------- |
-| `DOCKERHUB_TOKEN`        | Docker Hub access token                   |
-| `VITE_SUPABASE_URL`      | `https://your-project-ref.supabase.co`    |
-| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon public key             |
+**Entrypoint** (`docker/entrypoint.sh`) runs on every container start:
+1. Validates `APP_KEY` is set (fails fast if missing — never auto-generate in production)
+2. Forces IPv4 DNS resolution for RDS hostname
+3. Creates `public/storage` symlink
+4. Caches routes and Blade views
+5. Runs `php artisan migrate --force`
 
 ---
 
 ## AWS Infrastructure — Terraform
 
-The `terraform-aws/` directory contains Terraform configs to deploy the app on **AWS ECS Fargate with Graviton (ARM64)** processors.
-
 ### Resources Created
 
-| Resource               | Description                                          |
-| ---------------------- | ---------------------------------------------------- |
-| VPC                    | Custom VPC with 3 public subnets across 3 AZs        |
-| Internet Gateway       | Allows public internet access                         |
-| Security Group         | Allows HTTP (port 80) ingress from anywhere           |
-| ECS Cluster            | Fargate cluster with container insights enabled       |
-| Task Definition        | ARM64 Fargate task with Laravel env vars injected     |
-| ECS Service            | Runs 1 task with public IP (no ALB needed)            |
-| IAM Roles              | Task execution role + task role                       |
-| CloudWatch Log Group   | 7-day log retention                                   |
+| Resource                | Description                                                                 |
+| ----------------------- | --------------------------------------------------------------------------- |
+| VPC                     | 10.0.0.0/16, 2 public + 2 private subnets across 2 AZs                    |
+| NAT Gateways            | 1 per AZ for private subnet outbound traffic                                |
+| ALB                     | Internet-facing, HTTPS with ACM cert, HTTP→HTTPS redirect                  |
+| ACM Certificate         | `nodepulsecaringal.xyz` + `*.nodepulsecaringal.xyz`, DNS-validated         |
+| Route53                 | Alias records: apex + www → ALB; cdn.* → CloudFront                        |
+| ECS Cluster             | Container Insights enabled                                                   |
+| Launch Template + ASG   | Graviton ARM64, mixed On-Demand (1 base) + Spot scale-out                  |
+| ECS Capacity Provider   | Managed scaling + draining tied to ASG                                      |
+| ECS Task Definition     | ARM64, awsvpc, secrets from Secrets Manager                                 |
+| ECS Service             | Rolling deploy (100% min / 200% max), 120s grace period                     |
+| RDS PostgreSQL 15       | t4g.micro, private subnets, Secrets Manager credentials                    |
+| Secrets Manager         | `app_secrets` (APP_KEY) + `db_credentials` (host/user/pass/port/dbname)    |
+| S3 Bucket               | Private media bucket, Standard-IA after 30 days, versioning enabled        |
+| S3 Gateway Endpoint     | Free VPC routing — ECS→S3 traffic bypasses NAT                             |
+| CloudFront              | OAC (SigV4), `cdn.*` subdomain, `Managed-CachingOptimized`                 |
+| ECR Repository          | `employee-crud`, lifecycle: keeps 2 most recent images                      |
+| ECR VPC Endpoints       | `ecr.api`, `ecr.dkr`, `logs` — private subnet image pulls                 |
+| Lambda + EventBridge    | Auto-updates ECS task definition on every ECR push                         |
+| CloudWatch              | ECS log group + CPU/memory alarms                                           |
+| AWS Backup              | Optional RDS backup plan (controlled by `enable_backup`)                   |
 
 ### Deploy
 
 ```bash
 cd terraform-aws
 
-# Create terraform.tfvars with your credentials
+# Create terraform.tfvars (already in .gitignore)
 cat > terraform.tfvars <<EOF
-app_key     = "base64:your-app-key"
-db_host     = "aws-1-ap-south-1.pooler.supabase.com"
-db_port     = "6543"
-db_database = "postgres"
-db_username = "postgres.your-project-ref"
-db_password = "your-password"
+project_name = "your-project-name"
+domain_name  = "your-domain.com"
+
+db_database  = "yourdb"
+db_username  = "youradmin"
+db_password  = "your-password"
+
+# Generate with: php artisan key:generate --show
+app_key      = "base64:your-generated-key-here"
+
+app_env      = "production"
+app_debug    = false
+log_level    = "error"
 EOF
 
 terraform init
@@ -342,13 +268,25 @@ terraform plan
 terraform apply
 ```
 
-### Access the App
+### Key Variables
 
-After `terraform apply`, get the public IP:
-1. Go to **AWS Console** → **ECS** → **Clusters** → **aws-web-app-infra**
-2. Click on **Tasks** → click the running task
-3. Copy the **Public IP**
-4. Open `http://<public-ip>` in your browser
+| Variable             | Default         | Description                                               |
+| -------------------- | --------------- | --------------------------------------------------------- |
+| `project_name`       | —               | Used as prefix for all resource names                     |
+| `domain_name`        | —               | Apex domain (Route53 hosted zone must exist)              |
+| `aws_region`         | `ap-southeast-2`| AWS deployment region                                     |
+| `app_key`            | —               | Laravel APP_KEY (sensitive, stored in Secrets Manager)    |
+| `app_env`            | `production`    | Laravel APP_ENV                                           |
+| `app_debug`          | `false`         | Laravel APP_DEBUG                                         |
+| `log_level`          | `error`         | Laravel LOG_LEVEL                                         |
+| `task_cpu`           | `256`           | ECS task CPU units (0.25 vCPU)                            |
+| `task_memory`        | `512`           | ECS task memory (MB)                                      |
+| `desired_count`      | `1`             | Initial ECS task count                                    |
+| `asg_min_size`       | `1`             | Minimum EC2 instances in ASG                              |
+| `asg_max_size`       | `3`             | Maximum EC2 instances in ASG                              |
+| `enable_backup`      | `false`         | Enable AWS Backup for RDS                                 |
+| `skip_final_snapshot`| `true`          | Skip RDS final snapshot on destroy (false for prod)       |
+| `s3_force_destroy`   | `true`          | Allow S3 destroy with objects present (false for prod)    |
 
 ### Tear Down
 
@@ -358,37 +296,91 @@ terraform destroy --auto-approve
 
 ---
 
+## CI/CD Pipeline
+
+On every push to `EC2-dev-v3`:
+
+1. **GitHub Actions** builds an ARM64 Docker image using an `ubuntu-24.04-arm` runner (native — no QEMU)
+2. Authenticates to **AWS ECR** and pushes `:latest`
+3. **Amazon EventBridge** rule fires on the `ECR Image Action` PUSH event
+4. **Lambda** (`update-ecs-taskdef-on-ecr-push`) registers a new task definition revision and calls `UpdateService` to force a rolling redeploy
+5. ECS performs a rolling update — old task drains, new task starts with the new image
+
+### Required GitHub Secrets
+
+| Secret                  | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `AWS_ACCESS_KEY_ID`     | IAM user key with ECR push permissions   |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret                          |
+
+---
+
+## Secrets Management
+
+Sensitive values are **never** baked into the Docker image or passed as plaintext environment variables. They live in AWS Secrets Manager and are injected by the ECS agent at task launch time:
+
+| Secret Name           | Keys injected into container                          |
+| --------------------- | ----------------------------------------------------- |
+| `*/app-secrets`       | `APP_KEY`                                             |
+| `*/db-credentials`    | `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_DATABASE` |
+
+The ECS task execution role has `secretsmanager:GetSecretValue` permission scoped to these two secrets only.
+
+---
+
+## File Uploads
+
+Files are stored in S3 and served via CloudFront. The `Employee` model appends computed URL attributes:
+
+| Field           | S3 Path                        | Served via                          |
+| --------------- | ------------------------------ | ----------------------------------- |
+| `profile_photo` | `profile_photos/<uuid>.<ext>`  | `https://cdn.<domain>/<path>`       |
+| `resume`        | `resumes/<uuid>.<ext>`         | `https://cdn.<domain>/<path>`       |
+
+- Profile photos: images only, max 2 MB
+- Resumes: PDF / DOC / DOCX, max 5 MB
+- Old files are deleted from S3 on update or employee delete
+- Locally (`FILESYSTEM_DISK=public`): files go to `storage/app/public/` and are served via `/storage/...`
+
+---
+
 ## Troubleshooting
 
-### Database connection refused in Docker/ECS
+### Blank white page after deploy
 
-**Cause:** Using Supabase's direct connection (IPv6) instead of the connection pooler (IPv4).
+**Cause:** Laravel generating `http://` asset URLs — browser blocks mixed content over HTTPS.
 
-**Fix:** Switch to the pooler URL:
-```env
-DB_HOST=aws-1-ap-south-1.pooler.supabase.com
-DB_PORT=6543
+**Fix:** Already applied in `bootstrap/app.php`:
+```php
+if (env('APP_ENV') === 'production') {
+    $middleware->trustProxies(at: '*');
+}
 ```
+The ALB terminates SSL and forwards HTTP to the container. `trustProxies` tells Laravel to honour the `X-Forwarded-Proto: https` header so all generated URLs use `https://`.
 
-### Real-time not working (channel SUBSCRIBED but no events)
+### 500 on employee create/edit
 
-**Cause:** RLS is blocking the anon key from receiving change events.
+**Cause:** `league/flysystem-aws-s3-v3` missing from `composer.json` — Laravel can't load the S3 disk driver.
 
-**Fix:**
-1. Ensure Realtime is enabled on the `employees` table (Database → Tables → toggle)
-2. Add an RLS policy with `USING (true)` and `WITH CHECK (true)` as described above
+**Fix:** Already resolved — `composer require league/flysystem-aws-s3-v3 "^3.0"` is in `composer.json`.
 
-### Multiple GoTrueClient instances warning
+### Lambda not updating task definition
 
-**Cause:** Vite HMR recreates the Supabase client on hot reload during development.
+**Cause:** Lambda IAM role missing `iam:PassRole` — `RegisterTaskDefinition` requires it on both the task role and execution role.
 
-**Fix:** Already handled — the Supabase client uses a singleton pattern in `resources/js/lib/supabase.js`. This warning only appears in development and is harmless.
+**Fix:** Already applied in `terraform-aws/lambda.tf` — `iam:PassRole` statement scoped to both ECS IAM roles.
 
-### Full page reloads on button clicks
+### ECS task failing to start (Secrets Manager AccessDeniedException)
 
-**Cause:** `<button>` elements nested inside Inertia `<Link>` components. Since `<Link>` renders as `<a>`, having `<button>` inside `<a>` is invalid HTML — the button intercepts clicks before Inertia's SPA handler fires.
+**Cause:** Task execution role missing `secretsmanager:GetSecretValue`.
 
-**Fix:** Already applied — buttons are replaced with styled `<Link>` elements directly. Forms use Inertia's `useForm` hook which handles submissions via XHR.
+**Fix:** Already applied in `terraform-aws/iam.tf` — inline policy on the execution role scoped to both secrets.
+
+### terraform destroy blocked — S3 bucket not empty
+
+**Cause:** `s3_force_destroy = false` (production default).
+
+**Fix:** Set `s3_force_destroy = true` in `terraform.tfvars` before destroy (already set for dev).
 
 ---
 
