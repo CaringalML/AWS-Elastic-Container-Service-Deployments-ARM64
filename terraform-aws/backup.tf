@@ -35,6 +35,12 @@ data "aws_iam_policy_document" "backup_assume_role_policy" {
 	}
 }
 
+resource "aws_iam_role_policy_attachment" "backup_role_policy" {
+  count      = var.enable_backup ? 1 : 0
+  role       = aws_iam_role.backup_role[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+}
+
 resource "aws_backup_selection" "rds" {
 	count         = var.enable_backup ? 1 : 0
 	name          = "rds-selection"

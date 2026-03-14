@@ -134,6 +134,7 @@ resource "aws_wafv2_web_acl" "main" {
         vendor_name = "AWS"
         name        = "AWSManagedRulesCommonRuleSet"
 
+        # Body > 8KB — triggered by file uploads (photos, resumes)
         rule_action_override {
           name = "SizeRestrictions_BODY"
           action_to_use {
@@ -141,6 +142,16 @@ resource "aws_wafv2_web_acl" "main" {
           }
         }
 
+        # XSS scanner misreads multipart form bodies containing file data
+        # as XSS patterns — false positive on binary file uploads
+        rule_action_override {
+          name = "CrossSiteScripting_BODY"
+          action_to_use {
+            count {}
+          }
+        }
+
+        # Inertia.js prefetch requests sometimes omit User-Agent
         rule_action_override {
           name = "NoUserAgent_HEADER"
           action_to_use {

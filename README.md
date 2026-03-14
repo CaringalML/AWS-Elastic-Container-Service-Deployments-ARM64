@@ -30,6 +30,7 @@ Live at: **https://nodepulsecaringal.xyz**
 | Frontend           | React 18 + Inertia.js (SPA, no full-page reloads)                |
 | Database           | AWS RDS PostgreSQL 15 (t4g.micro, Graviton)                       |
 | File Storage       | AWS S3 Standard-IA + CloudFront CDN (OAC)                         |
+| Security           | AWS WAFv2 — OWASP Top 10, SQLi, Known Bad Inputs, rate limiting   |
 | CSS                | Tailwind CSS                                                      |
 | Containerization   | Docker — multi-stage (Node → Composer → PHP-FPM/Nginx/Supervisor) |
 | CI/CD              | GitHub Actions → ECR → EventBridge → Lambda → ECS                |
@@ -50,6 +51,8 @@ Live at: **https://nodepulsecaringal.xyz**
 - **Status badges** — active / inactive with colour coding
 - **Secure secrets** — APP_KEY and DB credentials injected at runtime from AWS Secrets Manager (never in the image or environment variables plaintext)
 - **IoT Live Data** — M5Stack Core 2 sends button press events via Kinesis → Lambda → PostgreSQL; React dashboard polls every 3s showing device, event type, button, battery, and timestamp
+- **Reset IoT Data** — one-click button to truncate IoT events table for a fresh slate
+- **WAF protection** — AWS WAFv2 on ALB: OWASP Top 10, SQLi, Known Bad Inputs, IP reputation, per-IP rate limiting (2000 req/5min)
 
 ---
 
@@ -64,6 +67,9 @@ Route53 (nodepulsecaringal.xyz)
    ▼
 Application Load Balancer (HTTPS 443, ACM cert)
    │  HTTP → HTTPS redirect
+   ▼
+AWS WAFv2 (Regional)
+   │  OWASP rules, SQLi, rate limit, IP reputation
    ▼
 ECS Service (awsvpc, 1 task)
    │
@@ -149,6 +155,7 @@ React IoT page (polls /iot-events every 3s)
 │   ├── eventbridge.tf       # ECR image push rule → Lambda target
 │   ├── cloudwatch.tf        # Log group + CloudWatch alarms (CPU, memory)
 │   ├── backup.tf            # AWS Backup plan (conditional on enable_backup)
+│   ├── waf.tf               # WAFv2 Web ACL — OWASP, SQLi, rate limit, body size monitor
 │   └── outputs.tf           # ALB DNS, ECR URL, RDS endpoint, CloudFront domain
 ├── hardware/
 │   └── m5stack/m5stack_kinesis.ino   # Arduino sketch: SigV4, Kinesis PutRecord, touchscreen UI
@@ -272,7 +279,8 @@ docker run -p 80:80 --env-file .env employee-crud
 | ECR VPC Endpoints       | `ecr.api`, `ecr.dkr`, `logs` — private subnet image pulls                 |
 | Lambda + EventBridge    | Auto-updates ECS task definition on every ECR push                         |
 | CloudWatch              | ECS log group + CPU/memory alarms                                           |
-| AWS Backup              | Optional RDS backup plan (controlled by `enable_backup`)                   |
+| AWS Backup              | Optional daily RDS backup, 30-day retention (controlled by `enable_backup`) |
+| AWS WAFv2               | Regional Web ACL on ALB — OWASP, SQLi, Known Bad Inputs, rate limiting     |
 
 ### Deploy
 
@@ -317,7 +325,8 @@ terraform apply
 | `desired_count`      | `1`             | Initial ECS task count                                    |
 | `asg_min_size`       | `1`             | Minimum EC2 instances in ASG                              |
 | `asg_max_size`       | `3`             | Maximum EC2 instances in ASG                              |
-| `enable_backup`      | `false`         | Enable AWS Backup for RDS                                 |
+| `enable_backup`      | `false`         | Enable AWS Backup for RDS (daily, 30-day retention)       |
+| `enable_waf`         | `false`         | Enable WAFv2 on ALB (~$5/month base, recommended for prod)|
 | `skip_final_snapshot`| `true`          | Skip RDS final snapshot on destroy (false for prod)       |
 | `s3_force_destroy`   | `true`          | Allow S3 destroy with objects present (false for prod)    |
 
@@ -408,6 +417,20 @@ The ALB terminates SSL and forwards HTTP to the container. `trustProxies` tells 
 **Cause:** Task execution role missing `secretsmanager:GetSecretValue`.
 
 **Fix:** Already applied in `terraform-aws/iam.tf` — inline policy on the execution role scoped to both secrets.
+
+### 403 Forbidden on employee create / file upload
+
+**Cause:** WAFv2 `CrossSiteScripting_BODY` or `SizeRestrictions_BODY` rule firing on multipart form body — WAF misreads binary JPEG/PDF data as XSS patterns or flags body > 8KB.
+
+**Fix:** Already applied in `terraform-aws/waf.tf` — both rules overridden to `count` mode. WAF logs the match in CloudWatch (`aws-waf-logs-<project>`) but does not block. Laravel validation handles actual file type and size enforcement.
+
+To inspect which WAF rule is blocking:
+```bash
+aws logs get-log-events \
+  --log-group-name "aws-waf-logs-<project>" \
+  --log-stream-name "<region>_<project>-waf_0" \
+  --region ap-southeast-2 --limit 20
+```
 
 ### terraform destroy blocked — S3 bucket not empty
 
