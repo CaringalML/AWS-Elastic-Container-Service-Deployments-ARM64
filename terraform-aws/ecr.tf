@@ -7,6 +7,27 @@ resource "aws_ecr_repository" "employee_crud" {
   }
 }
 
+resource "aws_ecr_lifecycle_policy" "employee_crud" {
+  repository = aws_ecr_repository.employee_crud.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only the 2 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 2
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
 # ECR VPC Interface Endpoints for private subnet image pulls
 resource "aws_vpc_endpoint" "ecr_api" {
   vpc_id            = aws_vpc.main.id

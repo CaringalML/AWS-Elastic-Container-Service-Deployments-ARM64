@@ -53,7 +53,9 @@ resource "aws_ecs_service" "main" {
     aws_lb_listener.http,                              # ALB must be ready before tasks register
     aws_iam_role_policy_attachment.ecs_task_execution_role_policy,
     aws_ecs_cluster_capacity_providers.main,           # Capacity provider must be associated first
-    aws_internet_gateway.main                          # Instances need internet for image pulls
+    aws_internet_gateway.main,                         # Instances need internet for image pulls
+    aws_db_instance.db_instance,                       # DB must be ready before app tasks start
+    aws_secretsmanager_secret_version.db_credentials_version, # Secrets must exist before task launch
   ]
 
   lifecycle {
