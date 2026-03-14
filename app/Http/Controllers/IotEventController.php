@@ -23,4 +23,12 @@ class IotEventController extends Controller
 
         return response()->json($events);
     }
+
+    // Delete all IoT events — fresh slate
+    public function destroy(Request $request)
+    {
+        IotEvent::truncate();
+
+        return response()->json(['message' => 'All IoT events deleted.']);
+    }
 }

@@ -24,7 +24,29 @@ export default function IoTIndex() {
     const [error, setError] = useState(null);
     const [lastUpdated, setLastUpdated] = useState(null);
     const [live, setLive] = useState(true);
+    const [resetting, setResetting] = useState(false);
     const intervalRef = useRef(null);
+
+    const resetEvents = async () => {
+        if (!window.confirm('Delete all IoT events? This cannot be undone.')) return;
+        setResetting(true);
+        try {
+            const res = await fetch('/iot-events', {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                    'Accept': 'application/json',
+                },
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setEvents([]);
+            setLastUpdated(new Date());
+        } catch (e) {
+            setError('Failed to reset events: ' + e.message);
+        } finally {
+            setResetting(false);
+        }
+    };
 
     const fetchEvents = async () => {
         try {
@@ -115,6 +137,22 @@ export default function IoTIndex() {
                             }}
                         >
                             Refresh
+                        </button>
+                        <button
+                            onClick={resetEvents}
+                            disabled={resetting}
+                            style={{
+                                padding: '8px 16px',
+                                borderRadius: '4px',
+                                border: '1px solid #dc3545',
+                                cursor: resetting ? 'not-allowed' : 'pointer',
+                                fontSize: '13px',
+                                background: 'white',
+                                color: '#dc3545',
+                                opacity: resetting ? 0.6 : 1,
+                            }}
+                        >
+                            {resetting ? 'Resetting...' : 'Reset Data'}
                         </button>
                     </div>
                 </div>

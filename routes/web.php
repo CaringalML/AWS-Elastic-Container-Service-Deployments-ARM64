@@ -18,3 +18,4 @@ Route::resource('employees', EmployeeController::class);
 // IoT Live Data
 Route::get('/iot', [IotEventController::class, 'index'])->name('iot.index');
 Route::get('/iot-events', [IotEventController::class, 'events'])->name('iot.events');
+Route::delete('/iot-events', [IotEventController::class, 'destroy'])->name('iot.destroy');

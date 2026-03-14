@@ -27,13 +27,14 @@ resource "aws_wafv2_web_acl" "main" {
 
   # ── Rule 1: IP Reputation List ─────────────────────────────────────────────
   # Blocks IPs associated with botnets, scrapers, and anonymous proxies.
-  # Priority 10 — cheapest check, runs first.
+  # IoT devices (M5Stack) send directly to Kinesis — a native AWS endpoint that
+  # bypasses the ALB and WAF entirely. This rule only affects browser traffic.
   rule {
     name     = "AWSManagedRulesAmazonIpReputationList"
     priority = 10
 
     override_action {
-      none {} # Honour the managed rule's own action (Block)
+      none {} # Block — does not affect IoT devices (they bypass ALB/WAF)
     }
 
     statement {
@@ -50,7 +51,44 @@ resource "aws_wafv2_web_acl" "main" {
     }
   }
 
-  # ── Rule 2: Per-IP Rate Limit ──────────────────────────────────────────────
+  # ── Rule 2: Large Body Monitor (> 15 MB) ──────────────────────────────────
+  # Counts (does not block) requests with a body larger than 15MB.
+  # AWS's built-in SizeRestrictions_BODY fires at 8KB which is too aggressive
+  # for modern file uploads (profile photos, resumes). This rule flags genuinely
+  # oversized uploads in CloudWatch for monitoring — Laravel validation handles
+  # the actual rejection with a proper error response to the user.
+  rule {
+    name     = "MonitorOversizedBody"
+    priority = 15
+
+    action {
+      count {}
+    }
+
+    statement {
+      size_constraint_statement {
+        comparison_operator = "GT"
+        size                = 15728640 # 15 MB in bytes
+        field_to_match {
+          body {
+            oversize_handling = "CONTINUE"
+          }
+        }
+        text_transformation {
+          priority = 0
+          type     = "NONE"
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.project_name}-large-body-monitor"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # ── Rule 4: Per-IP Rate Limit ──────────────────────────────────────────────
   # Blocks a single IP that sends more than 2000 requests in any 5-minute window.
   # Protects against brute-force login, credential stuffing, and basic DoS.
   rule {
@@ -77,6 +115,12 @@ resource "aws_wafv2_web_acl" "main" {
 
   # ── Rule 3: Core Rule Set (OWASP Top 10) ──────────────────────────────────
   # Covers SQL injection, XSS, LFI, RFI, HTTP protocol violations, and more.
+  #
+  # Overrides (COUNT instead of BLOCK):
+  #   - SizeRestrictions_BODY: fires on request body > 8KB — triggered by file
+  #     uploads (profile photo + resume) in the employee create/update forms.
+  #   - NoUserAgent_HEADER: blocks requests with no User-Agent — Inertia.js
+  #     prefetch requests sometimes omit this header.
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 30
@@ -89,6 +133,20 @@ resource "aws_wafv2_web_acl" "main" {
       managed_rule_group_statement {
         vendor_name = "AWS"
         name        = "AWSManagedRulesCommonRuleSet"
+
+        rule_action_override {
+          name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
+        }
+
+        rule_action_override {
+          name = "NoUserAgent_HEADER"
+          action_to_use {
+            count {}
+          }
+        }
       }
     }
 
