@@ -42,7 +42,7 @@ resource "aws_ecs_service" "main" {
 
   # Grace period gives the container time to start before ALB health checks
   # begin failing and potentially killing the task prematurely.
-  health_check_grace_period_seconds = 60
+  health_check_grace_period_seconds = 120
 
   # Rolling deployment: keep 100% healthy tasks running at all times,
   # allow up to 200% (double tasks) briefly during the rollout.

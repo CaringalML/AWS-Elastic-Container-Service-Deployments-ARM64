@@ -30,8 +30,17 @@ resource "aws_ecs_task_definition" "main" {
   container_definitions = jsonencode([
     {
       name      = var.project_name
-      image     = var.docker_image
+      image     = "${aws_ecr_repository.employee_crud.repository_url}:latest"
       essential = true
+
+      # Give the container 60s to boot before health checks start counting
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      }
 
       portMappings = [
         {
