@@ -15,18 +15,33 @@ resource "aws_secretsmanager_secret_version" "db_credentials_version" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+
+# Rotation is only created when var.db_rotation_lambda_arn is explicitly set.
+# To enable: deploy the AWS-provided rotation Lambda via the console or SAR,
+# then set db_rotation_lambda_arn in terraform.tfvars.
 resource "aws_secretsmanager_secret_rotation" "db_credentials_rotation" {
+  count               = var.db_rotation_lambda_arn != "" ? 1 : 0
   secret_id           = aws_secretsmanager_secret.db_credentials.id
-  rotation_lambda_arn = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:SecretsManagerRDSPostgreSQLRotationSingleUser"
+  rotation_lambda_arn = var.db_rotation_lambda_arn
   rotation_rules {
     automatically_after_days = 30
   }
-  depends_on = [aws_secretsmanager_secret_version.db_credentials_version]
+  depends_on = [
+    aws_secretsmanager_secret_version.db_credentials_version,
+    aws_lambda_permission.secretsmanager_rotation,
+  ]
 }
 
-data "aws_caller_identity" "current" {}
-
-# Note: You must provide a Lambda function for rotation (var.db_rotation_lambda_arn) or set up AWS provided rotation templates for RDS/Postgres.
+# Grants Secrets Manager permission to invoke the rotation Lambda
+resource "aws_lambda_permission" "secretsmanager_rotation" {
+  count         = var.db_rotation_lambda_arn != "" ? 1 : 0
+  statement_id  = "AllowSecretsManagerRotation"
+  action        = "lambda:InvokeFunction"
+  function_name = var.db_rotation_lambda_arn
+  principal     = "secretsmanager.amazonaws.com"
+  source_arn    = aws_secretsmanager_secret.db_credentials.arn
+}
 
 # ==============================================================================
 # App-level secrets (Laravel APP_KEY, etc.)
