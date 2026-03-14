@@ -31,10 +31,11 @@ export default function IoTIndex() {
         if (!window.confirm('Delete all IoT events? This cannot be undone.')) return;
         setResetting(true);
         try {
-            const res = await fetch('/iot-events', {
+            const xsrf = decodeURIComponent(document.cookie.split('; ').find(r => r.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '');
+        const res = await fetch('/iot-events', {
                 method: 'DELETE',
                 headers: {
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content,
+                    'X-XSRF-TOKEN': xsrf,
                     'Accept': 'application/json',
                 },
             });
