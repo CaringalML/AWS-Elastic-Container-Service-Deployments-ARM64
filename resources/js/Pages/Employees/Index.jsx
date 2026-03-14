@@ -41,7 +41,15 @@ export default function Index({ employees }) {
 
                 {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
-                    <h1 style={{ margin: 0, color: '#333' }}>Employees</h1>
+                    <div>
+                        <h1 style={{ margin: 0, color: '#333' }}>Employees</h1>
+                        <Link
+                            href="/iot"
+                            style={{ fontSize: '13px', color: '#6f42c1', textDecoration: 'none', fontWeight: 'bold' }}
+                        >
+                            IoT Live Data →
+                        </Link>
+                    </div>
                     <Link
                         href={route('employees.create')}
                         style={{

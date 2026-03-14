@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\IotEventController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -13,3 +14,7 @@ Route::get('/health', function () {
 });
 
 Route::resource('employees', EmployeeController::class);
+
+// IoT Live Data
+Route::get('/iot', [IotEventController::class, 'index'])->name('iot.index');
+Route::get('/iot-events', [IotEventController::class, 'events'])->name('iot.events');
