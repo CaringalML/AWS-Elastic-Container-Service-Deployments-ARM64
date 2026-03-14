@@ -75,7 +75,13 @@ variable "project_name" {
 variable "enable_backup" {
   description = "Enable AWS Backup resources (set to true for prod, false for dev)"
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "enable_waf" {
+  description = "Enable AWS WAFv2 Web ACL on the ALB (true for prod, false for dev — ~$5/month base cost)"
+  type        = bool
+  default     = true
 }
 
 # Skip final snapshot on DB deletion (true for dev, false for prod)
