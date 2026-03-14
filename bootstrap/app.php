@@ -14,7 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // In production, trust the ALB so X-Forwarded-Proto: https is respected.
         // Without this, Laravel sees only the inner HTTP request and generates http:// URLs,
         // which browsers block as mixed content on an HTTPS page.
-        if (app()->environment('production')) {
+        if (env('APP_ENV') === 'production') {
             $middleware->trustProxies(at: '*');
         }
 
