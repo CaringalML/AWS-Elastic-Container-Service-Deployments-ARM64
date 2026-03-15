@@ -35,7 +35,7 @@
 
 ---
 
-A full-stack employee management application with **profile photo and CV/resume uploads**. Built with Laravel 11, Inertia.js + React 18, and PostgreSQL. Containerized with Docker and deployed to **AWS ECS on self-managed EC2 Graviton (ARM64)** via Terraform.
+A full-stack employee management and **IoT live data** application with profile photo and CV/resume uploads. Built with Laravel 11, Inertia.js + React 18, and PostgreSQL. Containerized with Docker and deployed to **AWS ECS on self-managed EC2 Graviton (ARM64)** via Terraform. Features a real-time IoT dashboard powered by **M5Stack Core 2 → AWS Kinesis → Lambda → PostgreSQL**, displaying live button press events and battery telemetry from physical hardware.
 
 Live at: **https://nodepulsecaringal.xyz**
 
