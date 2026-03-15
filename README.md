@@ -1,5 +1,40 @@
 # Employee CRUD — Laravel + Inertia.js + React on AWS ECS (EC2 Graviton)
 
+**Compute**
+![ECS](https://img.shields.io/badge/ECS-EC2%20Graviton-FF9900?style=flat-square&logo=amazon-ecs&logoColor=white)
+![EC2](https://img.shields.io/badge/EC2-t4g%20ARM64-FF9900?style=flat-square&logo=amazon-ec2&logoColor=white)
+![Lambda](https://img.shields.io/badge/Lambda-Python%203.11-FF9900?style=flat-square&logo=aws-lambda&logoColor=white)
+![Auto Scaling](https://img.shields.io/badge/Auto%20Scaling-On--Demand%20%2B%20Spot-FF9900?style=flat-square&logo=amazon-aws&logoColor=white)
+
+**Networking**
+![VPC](https://img.shields.io/badge/VPC-Public%20%2B%20Private%20Subnets-8C4FFF?style=flat-square&logo=amazon-aws&logoColor=white)
+![ALB](https://img.shields.io/badge/ALB-HTTPS%20%2F%20HTTP%20Redirect-8C4FFF?style=flat-square&logo=amazon-aws&logoColor=white)
+![CloudFront](https://img.shields.io/badge/CloudFront-OAC%20CDN-8C4FFF?style=flat-square&logo=amazon-cloudfront&logoColor=white)
+![Route53](https://img.shields.io/badge/Route53-DNS%20%2B%20Alias-8C4FFF?style=flat-square&logo=amazon-route53&logoColor=white)
+![NAT Gateway](https://img.shields.io/badge/NAT%20Gateway-Private%20Egress-8C4FFF?style=flat-square&logo=amazon-aws&logoColor=white)
+
+**Storage & Database**
+![S3](https://img.shields.io/badge/S3-Private%20Media%20Bucket-569A31?style=flat-square&logo=amazon-s3&logoColor=white)
+![RDS](https://img.shields.io/badge/RDS-PostgreSQL%2015-527FFF?style=flat-square&logo=amazon-rds&logoColor=white)
+![ECR](https://img.shields.io/badge/ECR-Container%20Registry-FF9900?style=flat-square&logo=amazon-ecr&logoColor=white)
+
+**Security**
+![WAFv2](https://img.shields.io/badge/WAFv2-OWASP%20%2B%20SQLi%20%2B%20Rate%20Limit-DD344C?style=flat-square&logo=amazon-aws&logoColor=white)
+![ACM](https://img.shields.io/badge/ACM-TLS%20Certificate-DD344C?style=flat-square&logo=amazon-aws&logoColor=white)
+![Secrets Manager](https://img.shields.io/badge/Secrets%20Manager-APP__KEY%20%2B%20DB%20Creds-DD344C?style=flat-square&logo=amazon-aws&logoColor=white)
+![IAM](https://img.shields.io/badge/IAM-Least%20Privilege%20Roles-DD344C?style=flat-square&logo=amazon-aws&logoColor=white)
+
+**IoT & Streaming**
+![Kinesis](https://img.shields.io/badge/Kinesis-Data%20Streams%201%20Shard-FF9900?style=flat-square&logo=amazon-aws&logoColor=white)
+
+**Observability & Automation**
+![CloudWatch](https://img.shields.io/badge/CloudWatch-Logs%20%2B%20Alarms-FF4F8B?style=flat-square&logo=amazon-cloudwatch&logoColor=white)
+![SNS](https://img.shields.io/badge/SNS-Email%20Alerts-FF4F8B?style=flat-square&logo=amazon-sns&logoColor=white)
+![EventBridge](https://img.shields.io/badge/EventBridge-ECR%20Push%20Trigger-FF4F8B?style=flat-square&logo=amazon-aws&logoColor=white)
+![AWS Backup](https://img.shields.io/badge/AWS%20Backup-Daily%2030--day%20RDS-FF4F8B?style=flat-square&logo=amazon-aws&logoColor=white)
+
+---
+
 A full-stack employee management application with **profile photo and CV/resume uploads**. Built with Laravel 11, Inertia.js + React 18, and PostgreSQL. Containerized with Docker and deployed to **AWS ECS on self-managed EC2 Graviton (ARM64)** via Terraform.
 
 Live at: **https://nodepulsecaringal.xyz**

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -h \"^resource \" \"c:/AWS Infrastructure Deployments/Fargate-dev/employee-crud/terraform-aws/\"*.tf)"
+    ]
+  }
+}
