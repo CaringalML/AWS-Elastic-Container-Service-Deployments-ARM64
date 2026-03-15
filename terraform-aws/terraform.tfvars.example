@@ -1,0 +1,16 @@
+project_name = "your-project-name"
+docker_image = "123456789012.dkr.ecr.ap-southeast-2.amazonaws.com/your-project:latest"
+
+# Database
+db_database  = "yourdb"
+db_username  = "youradmin"
+db_password  = "YourStrongPassword123!"
+db_port      = 5432
+
+# Generate with: php artisan key:generate --show
+app_key = "base64:your-generated-app-key-here="
+
+# Laravel app config
+app_env   = "production"
+app_debug = false
+log_level = "error"
